@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 앱 아이콘 — 감시(눈)와 표적을 겹친 단순한 도형 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#1ABC9C"
+        android:pathData="M54,34c-13,0 -24,8 -29,20c5,12 16,20 29,20s24,-8 29,-20C78,42 67,34 54,34zM54,66c-6.6,0 -12,-5.4 -12,-12s5.4,-12 12,-12s12,5.4 12,12S60.6,66 54,66z" />
+    <path
+        android:fillColor="#F39C12"
+        android:pathData="M54,48a6,6 0 1,0 0.1,0z" />
+</vector>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 어두운 바탕 고정 — 방송 중 눈이 편하고, 오버레이와 톤을 맞춘다 -->
+    <style name="Theme.Gapja" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowBackground">#FF18222C</item>
+        <item name="android:statusBarColor">#FF101A24</item>
+        <item name="android:navigationBarColor">#FF101A24</item>
+        <item name="android:textColorPrimary">#FFFFFFFF</item>
+        <item name="colorAccent">#FF1ABC9C</item>
+    </style>
+</resources>

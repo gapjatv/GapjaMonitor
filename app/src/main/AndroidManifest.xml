@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 포그라운드 서비스로 화면을 계속 캡처하기 위해 필요 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+
+    <!-- 감시 중 알림 표시 (Android 13+ 에서는 사용자 허용이 필요하지만, 거부해도 동작한다) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
+    <!-- 게임 화면 위에 보스 패널을 띄우기 위해 필요 (설정에서 사용자가 직접 허용) -->
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+    <application
+        android:allowBackup="true"
+        android:icon="@mipmap/ic_launcher"
+        android:label="@string/app_name"
+        android:supportsRtl="false"
+        android:theme="@style/Theme.Gapja">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:screenOrientation="portrait">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".AnalysisActivity"
+            android:exported="false"
+            android:label="판별 기록 분석" />
+
+        <!-- 게임 화면에서 보스만 잘라 인식용 사진으로 저장 -->
+        <activity
+            android:name=".CropActivity"
+            android:exported="false"
+            android:label="보스 사진 만들기"
+            android:screenOrientation="portrait" />
+
+        <!--
+            화면 캡처 서비스.
+            foregroundServiceType="mediaProjection" 이 없으면 Android 14 이상에서
+            MissingForegroundServiceTypeException 으로 즉시 죽는다.
+        -->
+        <service
+            android:name=".CaptureService"
+            android:exported="false"
+            android:foregroundServiceType="mediaProjection" />
+
+        <!-- 게임 위에 떠 있는 보스 패널 -->
+        <service
+            android:name=".OverlayService"
+            android:exported="false" />
+
+        <!-- 기록 파일(JSON/CSV)을 다른 앱으로 보낼 때 쓴다 -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+    </application>
+</manifest>
