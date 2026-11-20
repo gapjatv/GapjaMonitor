@@ -16,11 +16,19 @@ android {
         versionCode = 5
         versionName = "1.4"
 
-        // OpenCV 네이티브 라이브러리를 필요한 ABI만 담아 APK 크기를 줄인다.
-        // (요즘 안드로이드 폰은 전부 arm64-v8a 다. 구형 32비트 폰도 쓰려면 armeabi-v7a 를 남겨 둔다)
-        ndk {
-            // 폰·태블릿(ARM) + 뮤뮤플레이어 같은 PC 앱플레이어(x86_64)
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
+        // 어떤 ABI 를 담을지는 아래 splits 에서 정한다 (기기 종류별 APK)
+    }
+
+    // 기기 종류별로 APK 를 따로 만든다 (하나로 합치면 100MB 가 넘는다)
+    //   arm64-v8a   → 요즘 폰·태블릿 (대부분 이것)
+    //   armeabi-v7a → 오래된 32비트 폰
+    //   x86_64      → 뮤뮤플레이어 같은 PC 앱플레이어
+    splits {
+        abi {
+            isEnable = true
+            reset()
+            include("arm64-v8a", "armeabi-v7a", "x86_64")
+            isUniversalApk = false
         }
     }
 

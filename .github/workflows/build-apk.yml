@@ -45,13 +45,17 @@ jobs:
       - name: Rename APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk out/UnbbalBossAlarm-v${{ steps.ver.outputs.v }}.apk
+          V=${{ steps.ver.outputs.v }}
+          D=app/build/outputs/apk/debug
+          cp $D/app-arm64-v8a-debug.apk   out/UnbbalBossAlarm-v$V-phone.apk
+          cp $D/app-armeabi-v7a-debug.apk out/UnbbalBossAlarm-v$V-phone32.apk
+          cp $D/app-x86_64-debug.apk      out/UnbbalBossAlarm-v$V-mumu.apk
           ls -la out
 
       - uses: actions/upload-artifact@v4
         with:
           name: UnbbalBossAlarm-apk
-          path: out/UnbbalBossAlarm-v${{ steps.ver.outputs.v }}.apk
+          path: out/*.apk
           retention-days: 30
 
       # 폰에서 바로 받을 수 있게 Releases 페이지에도 올린다 (같은 버전이면 파일만 교체)
@@ -61,8 +65,8 @@ jobs:
         run: |
           V=v${{ steps.ver.outputs.v }}
           gh release view $V >/dev/null 2>&1 || \
-            gh release create $V --title "운빨보스알림 $V" --notes "폰에서 이 APK를 받아 설치하세요." --target "$GITHUB_SHA"
-          gh release upload $V out/UnbbalBossAlarm-$V.apk --clobber
+            gh release create $V --title "운빨보스알림 $V" --target "$GITHUB_SHA" --notes "폰·태블릿: -phone.apk / 오래된 32비트 폰: -phone32.apk / 뮤뮤플레이어 등 PC 앱플레이어: -mumu.apk"
+          gh release upload $V out/*.apk --clobber
 
       # 최신 APK 를 'apk' 브랜치에도 보관한다
       - name: Store APK on apk branch
