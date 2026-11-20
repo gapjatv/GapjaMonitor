@@ -18,7 +18,12 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - uses: android-actions/setup-android@v3
+      # GitHub 서버에는 Android SDK 가 이미 깔려 있다 — 라이선스 동의만 해 둔다
+      - name: Accept Android SDK licenses
+        run: |
+          SDKM=$(ls -d $ANDROID_HOME/cmdline-tools/*/bin/sdkmanager | sort -V | tail -1)
+          echo "sdkmanager: $SDKM"
+          yes | "$SDKM" --licenses > /dev/null || true
 
       - uses: gradle/actions/setup-gradle@v4
         with:
