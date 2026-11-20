@@ -178,10 +178,10 @@ object Prefs {
         sp(ctx).edit().putBoolean("ov_vertical", on).apply()
 
     /** 보스 사진 최대 지름(dp) — 보스가 적을 때의 크기 */
-    fun overlayMaxDp(ctx: Context): Int = sp(ctx).getInt("ov_size", 56).coerceIn(24, 120)
+    fun overlayMaxDp(ctx: Context): Int = sp(ctx).getInt("ov_size", 56).coerceIn(20, 160)
 
     fun setOverlayMaxDp(ctx: Context, dp: Int) =
-        sp(ctx).edit().putInt("ov_size", dp.coerceIn(24, 120)).apply()
+        sp(ctx).edit().putInt("ov_size", dp.coerceIn(20, 160)).apply()
 
     /** 사진 줄의 최대 길이(dp) — 이 길이를 넘으면 자동 축소. 0 이면 화면 끝까지 */
     fun overlayLengthDp(ctx: Context): Int = sp(ctx).getInt("ov_len", 0).coerceIn(0, 4000)
@@ -204,8 +204,8 @@ object Prefs {
 
     // ── 보스설정 버튼 ──
 
-    /** [보스설정] 버튼 크기(%) — 100 이 기본 */
-    fun buttonScale(ctx: Context): Int = sp(ctx).getInt("btn_scale", 100).coerceIn(60, 200)
+    /** [보스설정] 버튼 크기(%) — 130 이 기본 */
+    fun buttonScale(ctx: Context): Int = sp(ctx).getInt("btn_scale", 130).coerceIn(60, 200)
 
     fun setButtonScale(ctx: Context, pct: Int) =
         sp(ctx).edit().putInt("btn_scale", pct.coerceIn(60, 200)).apply()
@@ -287,6 +287,12 @@ object Prefs {
 
     fun setStripPassThrough(ctx: Context, on: Boolean) =
         sp(ctx).edit().putBoolean("strip_pass", on).apply()
+
+    /** [사진 추가] 를 누르면 사진첩에서 고를지(기본) 파일에서 고를지 */
+    fun pickFromGallery(ctx: Context): Boolean = sp(ctx).getBoolean("pick_gallery", true)
+
+    fun setPickFromGallery(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean("pick_gallery", on).apply()
 
     /** 기본 자료(보스 사진·인식 사진·음성)를 앱에 풀어 둔 버전 */
     fun assetsVersion(ctx: Context): Int = sp(ctx).getInt("assets_ver", 0)

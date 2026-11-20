@@ -46,6 +46,11 @@ object Bus {
 
     var onLog: ((String) -> Unit)? = null
 
+    /** 자르기 화면이 열리면 게임 위 '캡처 준비 중…' 안내를 닫는다 */
+    var onCropOpened: (() -> Unit)? = null
+
+    fun cropOpened() { main.post { try { onCropOpened?.invoke() } catch (_: Exception) {} } }
+
     /** [보스설정 → 끄기] 를 누르면 메인 화면을 닫는다 */
     var onExit: (() -> Unit)? = null
 

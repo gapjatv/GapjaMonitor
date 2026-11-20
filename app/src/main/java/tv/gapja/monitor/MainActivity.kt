@@ -52,6 +52,8 @@ class MainActivity : AppCompatActivity() {
     private var mode = GameMode.INVASION
     private var modeBtn: Button? = null
     private var sourceView: TextView? = null
+    private var addBtn: Button? = null
+    private var addWhereBtn: Button? = null
     private var sourceBtn: Button? = null
 
     private val changeListener: () -> Unit = { refresh() }
@@ -62,7 +64,9 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.StartActivityForResult()
     ) { res ->
         if (res.resultCode == Activity.RESULT_OK && res.data != null) {
-            Bus.running = true
+            // 실제로 감시가 시작됐는지는 서비스가 정한다.
+            // (예전에는 여기서 먼저 '감시 중' 으로 바꿔서, 시작이 실패하면 [멈춤] 버튼만 남고
+            //  눌러도 아무 반응이 없는 '먹통' 상태가 됐다 — 뮤뮤플레이어에서 동의 창이 사라질 때 등)
             CaptureService.start(
                 this, res.resultCode, res.data!!, mode,
                 Prefs.downscale(this), Prefs.intervalMs(this)
@@ -102,15 +106,54 @@ class MainActivity : AppCompatActivity() {
         refresh()
     }
 
-    /** 폰 스크린샷을 골라 보스만 잘라내기 */
+    /** 폰 스크린샷을 골라 보스만 잘라내기 (파일에서) */
     private val pickScreenshot = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
-    ) { uri ->
-        if (uri == null) return@registerForActivityResult
+    ) { uri -> if (uri != null) openCrop(uri) }
+
+    /** 사진첩(카메라 사진·스크린샷)에서 골라 보스만 잘라내기 — 기본 */
+    private val pickFromGallery = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri -> if (uri != null) openCrop(uri) }
+
+    /**
+     * 고른 사진을 여기서 읽어서 자르기 화면에 넘긴다.
+     * (사진첩에서 받은 읽기 권한은 이 화면에만 있어서, 주소만 넘기면 자르기 화면이 못 읽는 기기가 있다)
+     */
+    private fun openCrop(uri: Uri) {
+        val bmp = try {
+            val o = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, o) }
+            var sample = 1
+            // 아주 큰 카메라 사진은 줄여서 읽는다 (메모리 부족 방지) — 스크린샷은 그대로
+            while (o.outWidth / sample > 4000 || o.outHeight / sample > 4000) sample *= 2
+            contentResolver.openInputStream(uri)?.use {
+                android.graphics.BitmapFactory.decodeStream(it, null,
+                    android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+            }
+        } catch (_: Throwable) { null }
+        if (bmp == null) { toast("사진을 읽지 못했습니다"); return }
+        CropActivity.pendingBitmap = bmp
         startActivity(Intent(this, CropActivity::class.java)
-            .putExtra(CropActivity.EXTRA_URI, uri.toString())
-            .putExtra(CropActivity.EXTRA_MODE, mode.key)
-            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION))
+            .putExtra(CropActivity.EXTRA_FROM_MEMORY, true)
+            .putExtra(CropActivity.EXTRA_MODE, mode.key))
+    }
+
+    /**
+     * [사진 추가] — 기본은 사진첩에서 스크린샷을 골라 보스만 잘라 넣는다.
+     * '파일' 로 바꾸면 이미 잘라 둔 PNG 파일들을 이름 그대로 한꺼번에 가져온다.
+     */
+    private fun addPictures() {
+        if (Prefs.pickFromGallery(this)) {
+            try {
+                pickFromGallery.launch(androidx.activity.result.PickVisualMediaRequest(
+                    ActivityResultContracts.PickVisualMedia.ImageOnly))
+            } catch (_: Exception) {
+                pickScreenshot.launch(arrayOf("image/*"))
+            }
+        } else {
+            pickTemplates.launch(arrayOf("image/png"))
+        }
     }
 
     private val pickVoices = registerForActivityResult(
@@ -140,7 +183,7 @@ class MainActivity : AppCompatActivity() {
         if (uri == null) return@registerForActivityResult
         val store = seqRepo.load()
         val n = seqRepo.importFrom(uri, store)
-        Bus.log(if (n > 0) "🗂 PC 기록 ${n}판을 가져왔습니다. (누적 ${store.games.size}판)"
+        Bus.log(if (n > 0) "🗂 기록 ${n}판을 가져왔습니다. (누적 ${store.games.size}판)"
                 else "🗂 새로 가져올 판이 없습니다. (이미 있는 기록이거나 형식이 다릅니다)")
         refresh()
     }
@@ -191,29 +234,28 @@ class MainActivity : AppCompatActivity() {
      *   • 폰에서 새로 등록: 내가 폰에서 캡처한 사진만 쓴다. 처음에 등록하는 수고가 있지만 인식이 가장 정확하다.
      */
     private fun askTemplateSource() {
-        val usingPc = Prefs.usePcTemplates(this)
+        val usingDefault = Prefs.usePcTemplates(this)
         val mine = Prefs.userTemplates(this).size
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("인식용 보스 사진을 어떻게 할까요?")
             .setMessage(
-                "PC 화면과 폰 화면은 크기·모양이 조금씩 달라서, 폰에서 직접 캡처한 사진이 인식이 가장 정확하고 " +
-                "엉뚱한 곳(로비 그림 등)에 덜 걸립니다.\n\n" +
-                "• 새로 등록 (추천): 내가 폰에서 캡처한 사진만 씁니다. 게임 중 [보스설정 → 캡처] 로 " +
-                "보스와 로비 화면을 한 장씩 등록하세요. 지금 등록된 내 사진: ${mine}장\n\n" +
-                "• PC 사진 그대로: 앱에 들어 있는 PC 캡처를 씁니다. 바로 쓸 수 있습니다.\n\n" +
+                "• 기본 사진 그대로 (추천): 앱에 들어 있는 보스·로비 사진으로 바로 시작합니다. " +
+                "인식이 잘 안 되는 보스만 게임 중 [보스설정 → 캡처] 로 추가하면 함께 씁니다.\n\n" +
+                "• 직접 새로 등록: 내가 캡처한 사진만 씁니다. 기기마다 화면이 조금씩 달라서 가장 정확하지만, " +
+                "보스와 로비 화면을 한 장씩 등록해야 인식이 시작됩니다. 지금 등록된 내 사진: ${mine}장\n\n" +
                 "언제든 메인 화면 '인식용 사진' 에서 바꿀 수 있습니다." +
-                if (Prefs.templateSourceAsked(this)) "\n\n(지금: ${if (usingPc) "PC 사진 그대로" else "새로 등록"})" else ""
+                if (Prefs.templateSourceAsked(this)) "\n\n(지금: ${if (usingDefault) "기본 사진 그대로" else "직접 새로 등록"})" else ""
             )
-            .setPositiveButton("새로 등록") { _, _ ->
+            .setPositiveButton("기본 사진 그대로") { _, _ ->
+                Prefs.setUsePcTemplates(this, true)
+                Bus.log("🧩 [인식용 사진] 기본 사진으로 인식합니다. (직접 캡처한 사진도 함께 씁니다)")
+                refresh()
+            }
+            .setNegativeButton("직접 새로 등록") { _, _ ->
                 Prefs.setUsePcTemplates(this, false)
-                Bus.log("🆕 [인식용 사진] 폰에서 새로 등록한 사진만 씁니다. 등록 현황은 '저장된 보스 사진 보기' 에서 확인하세요.")
+                Bus.log("🆕 [인식용 사진] 직접 등록한 사진만 씁니다. 등록 현황은 '저장된 보스 사진 보기' 에서 확인하세요.")
                 refresh()
                 if (Prefs.userTemplates(this).isEmpty()) showRegisterGuide()
-            }
-            .setNegativeButton("PC 사진 그대로") { _, _ ->
-                Prefs.setUsePcTemplates(this, true)
-                Bus.log("🖥 [인식용 사진] 앱에 들어 있는 PC 사진을 씁니다. (직접 캡처한 사진도 함께 씁니다)")
-                refresh()
             }
             .setCancelable(Prefs.templateSourceAsked(this))
             .show()
@@ -261,7 +303,7 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(dp(64), dp(64)).also { it.rightMargin = dp(12) })
         val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titleBox.addView(TextView(this).apply {
-            text = "갑자TV 관제탑"
+            text = "운빨보스알림"
             setTextColor(ACCENT); textSize = 22f
             setTypeface(typeface, Typeface.BOLD)
         })
@@ -288,8 +330,13 @@ class MainActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
             isAllCaps = false
             setOnClickListener {
-                if (Bus.running) CaptureService.send(this@MainActivity, CaptureService.ACTION_STOP)
-                else startCapture()
+                if (Bus.running && CaptureService.isAlive()) {
+                    CaptureService.send(this@MainActivity, CaptureService.ACTION_STOP)
+                } else {
+                    // 서비스가 없는데 '감시 중' 으로 남아 있으면 바로잡고 다시 시작한다
+                    Bus.running = false
+                    startCapture()
+                }
             }
         }
         col.addView(startBtn, LinearLayout.LayoutParams(
@@ -362,7 +409,7 @@ class MainActivity : AppCompatActivity() {
         syncLayout()
         col.addView(body("사진 배치"))
         col.addView(row(hBtn, vBtn))
-        col.addView(slider("사진 최대 크기", 24, 120, Prefs.overlayMaxDp(this), "dp") {
+        col.addView(slider("사진 최대 크기", 20, 160, Prefs.overlayMaxDp(this), "dp") {
             Prefs.setOverlayMaxDp(this, it); Bus.settingsChanged()
         })
         col.addView(body("위치·길이는 게임 화면 위의 [조절] 버튼으로 바꿉니다. " +
@@ -409,7 +456,7 @@ class MainActivity : AppCompatActivity() {
                 "앱을 '삭제' 할 때만 지워지므로, 캡처할 때마다 '${Backup.LOCATION}' 에도 자동으로 한 장씩 남겨 둡니다."))
 
         // ── 기본 자료 ──
-        col.addView(h("기본 자료 (PC에서 가져옴)"))
+        col.addView(h("기본 자료"))
         resView = TextView(this).apply {
             setTextColor(Color.WHITE); textSize = 12f
             setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -420,9 +467,13 @@ class MainActivity : AppCompatActivity() {
         col.addView(btn("🖼 저장된 보스 사진 · 로비 화면 보기", "#2980B9") {
             startActivity(Intent(this, GalleryActivity::class.java))
         })
-        col.addView(btn("✂️ 인식 안 될 때: 폰 스크린샷에서 보스·로비 잘라 넣기", "#34495E") {
-            pickScreenshot.launch(arrayOf("image/*"))
-        })
+        addBtn = btn("", "#34495E") { addPictures() }
+        col.addView(addBtn)
+        addWhereBtn = btn("", "#2A3644") {
+            Prefs.setPickFromGallery(this, !Prefs.pickFromGallery(this)); refresh()
+            toast(if (Prefs.pickFromGallery(this)) "사진첩에서 고르도록 바꿨습니다" else "파일에서 PNG를 고르도록 바꿨습니다")
+        }
+        col.addView(addWhereBtn)
 
         // ── 로그 ──
         col.addView(h("로그"))
@@ -526,12 +577,12 @@ class MainActivity : AppCompatActivity() {
                 col.addView(pair(b, if (BossCatalog.isSpecial(b)) special else white, et))
             }
         }
-        col.addView(btn("↺ PC 기본값으로 되돌리기", "#7F8C8D") {
+        col.addView(btn("↺ 기본값으로 되돌리기", "#7F8C8D") {
             Prefs.resetWarnings(this)
             for ((et, get) in fields) et.setText(get().toString())
-            toast("위험 경보 시간을 PC 기본값으로 되돌렸습니다")
+            toast("위험 경보 시간을 기본값으로 되돌렸습니다")
         })
-        col.addView(body("경보음은 PC sounds 폴더의 보스별 MP3(${AssetInstaller.alarmCount(this)}개)를 씁니다. " +
+        col.addView(body("경보음은 보스별 기본 경보음 MP3(${AssetInstaller.alarmCount(this)}개)를 씁니다. " +
                 "경보음이 없는 보스는 경보 멘트(준비·변신주의·미티어대비 등)를 읽어 줍니다."))
     }
 
@@ -566,15 +617,27 @@ class MainActivity : AppCompatActivity() {
             Prefs.setAnnounceDelayMs(this, it)
         })
 
+        col.addView(h("화면 공유 확인창 없애기 (뮤뮤플레이어 · 루팅 기기)"))
+        col.addView(body(
+            "[시작] 할 때 뜨는 '화면을 공유하시겠습니까?' 창은 안드로이드 규칙이라 보통은 없앨 수 없습니다. " +
+            "다만 루트 권한이 있는 기기(뮤뮤플레이어 설정 → 루트 권한 켜기 등)에서는 한 번 허용해 두면 " +
+            "다음부터 창 없이 바로 시작됩니다. (안드로이드 13 이하에서 동작, 기기에 따라 안 될 수 있음)\n" +
+            "PC에 연결해 직접 할 때: adb shell appops set $packageName PROJECT_MEDIA allow"
+        ))
+        col.addView(row(
+            btn("🔓 확인창 없애기 (루트)", "#8E44AD") { setProjectionAppOp(true) },
+            btn("↺ 되돌리기", "#7F8C8D") { setProjectionAppOp(false) }
+        ))
+
         col.addView(h("인식용 사진 파일"))
         col.addView(row(
-            btn("🖼 PNG 추가", "#2980B9") { pickTemplates.launch(arrayOf("image/png")) },
+            btn("🖼 PNG 파일 추가", "#2980B9") { pickTemplates.launch(arrayOf("image/png")) },
             btn("📊 기록 분석", "#16A085") { startActivity(Intent(this, AnalysisActivity::class.java)) }
         ))
 
-        col.addView(h("PC와 기록 주고받기"))
+        col.addView(h("기록 주고받기"))
         col.addView(row(
-            btn("📥 PC 기록 가져오기", "#2980B9") { pickSeqJson.launch(arrayOf("application/json", "*/*")) },
+            btn("📥 기록 가져오기", "#2980B9") { pickSeqJson.launch(arrayOf("application/json", "*/*")) },
             btn("📤 내보내기", "#16A085") { shareJson() }
         ))
     }
@@ -647,6 +710,32 @@ class MainActivity : AppCompatActivity() {
 
     // ── 동작 ─────────────────────────────────────────────────────
 
+    /**
+     * 루트 권한으로 '화면 공유 항상 허용' (앱 권한 PROJECT_MEDIA) 을 켜거나 끈다.
+     * 켜 두면 안드로이드 13 이하에서는 [시작] 할 때 확인창 없이 바로 시작된다.
+     * 루트 요청 창이 뜰 수 있어 백그라운드에서 돌리고, 15초 안에 끝나지 않으면 실패로 본다.
+     */
+    private fun setProjectionAppOp(allow: Boolean) {
+        val cmd = "appops set $packageName PROJECT_MEDIA ${if (allow) "allow" else "default"}"
+        toast("루트 권한을 요청합니다… (뜨는 창에서 허용해 주세요)")
+        Thread {
+            val ok = try {
+                val p = Runtime.getRuntime().exec(arrayOf("su", "-c", cmd))
+                val done = p.waitFor(15, java.util.concurrent.TimeUnit.SECONDS)
+                if (!done) { p.destroy(); false } else p.exitValue() == 0
+            } catch (_: Exception) { false }
+            runOnUiThread {
+                if (ok) {
+                    toast(if (allow) "설정했습니다. 다음 [시작] 부터 확인창 없이 시작됩니다" else "되돌렸습니다")
+                    Bus.log(if (allow) "🔓 화면 공유 확인창을 없앴습니다. (루트)" else "↺ 화면 공유 확인창을 다시 띄우도록 되돌렸습니다.")
+                } else {
+                    toast("루트 권한이 없거나 거부되었습니다")
+                    Bus.log("⚠️ 루트 권한이 없어 확인창을 없애지 못했습니다. 뮤뮤플레이어는 설정에서 '루트 권한' 을 켠 뒤 다시 눌러 주세요.")
+                }
+            }
+        }.start()
+    }
+
     private fun startCapture() {
         if (templates.count() == 0) {
             toast("인식용 보스 사진이 없습니다. 고급 설정에서 PNG를 추가해 주세요"); return
@@ -687,10 +776,14 @@ class MainActivity : AppCompatActivity() {
         val m = GameMode.from(Prefs.mode(this))
         val targets = BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m)
         val done = targets.count { templates.hasUserShot(it, m) }
-        sourceView?.text = (if (usePc) "🖥 PC 사진 그대로 쓰는 중 (직접 캡처한 사진도 함께 씀)\n"
-                else "🆕 폰에서 새로 등록한 사진만 쓰는 중\n") +
+        sourceView?.text = (if (usePc) "🧩 기본 사진으로 인식하는 중 (직접 캡처한 사진도 함께 씀)\n"
+                else "🆕 직접 등록한 사진만 쓰는 중\n") +
                 "내가 등록한 사진: ${Prefs.userTemplates(this).size}장 · ${m.label} 등록 현황 $done/${targets.size}"
-        sourceBtn?.text = if (usePc) "🆕 폰에서 새로 등록해서 쓰기로 바꾸기" else "🖥 PC 사진도 같이 쓰기로 바꾸기"
+        val gal = Prefs.pickFromGallery(this)
+        addBtn?.text = if (gal) "📷 사진 추가 — 사진첩에서 스크린샷 골라 보스·로비 잘라 넣기"
+        else "📁 사진 추가 — 파일에서 잘라 둔 PNG 가져오기"
+        addWhereBtn?.text = "가져올 곳: ${if (gal) "사진첩 (기본)" else "파일"}  · 눌러서 바꾸기"
+        sourceBtn?.text = if (usePc) "🆕 직접 새로 등록해서 쓰기로 바꾸기" else "🧩 기본 사진도 같이 쓰기로 바꾸기"
         // 로비 인식으로 서비스가 모드를 바꿨을 수 있으니 저장된 값을 다시 읽는다
         mode = GameMode.from(Prefs.mode(this))
         modeBtn?.let { b ->

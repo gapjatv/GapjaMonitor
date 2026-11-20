@@ -92,8 +92,8 @@ class AnalysisActivity : AppCompatActivity() {
             sb.append("침공 모드로 한 판을 진행하고 '판 종료·기록'을 누르면\n")
             sb.append("순서가 저장됩니다.\n")
             sb.append("(자동 인식이 한 번도 없었던 판은 저장되지 않습니다)\n\n")
-            sb.append("PC에서 쓰던 boss_sequences.json 이 있으면\n")
-            sb.append("메인 화면 → 'PC 기록 가져오기' 로 이어서 쓸 수 있습니다.")
+            sb.append("다른 기기에서 쓰던 boss_sequences.json 이 있으면\n")
+            sb.append("메인 화면 → 고급 설정 → '기록 가져오기' 로 이어서 쓸 수 있습니다.")
             return sb.toString()
         }
         val full = seq.games.count { it.main.size >= 8 }

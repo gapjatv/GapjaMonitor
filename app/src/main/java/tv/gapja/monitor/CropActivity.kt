@@ -17,6 +17,7 @@ import android.widget.ArrayAdapter
 import android.widget.Button
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.SeekBar
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
@@ -50,6 +51,7 @@ class CropActivity : AppCompatActivity() {
     private var mode = GameMode.INVASION
     private var asExtra = true
     private var source: Bitmap? = null
+    private var zoomBar: SeekBar? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -64,6 +66,8 @@ class CropActivity : AppCompatActivity() {
         }
         val root = buildUi()
         setContentView(root)
+        // 게임 위에 떠 있던 '캡처 준비 중…' 안내를 닫는다
+        Bus.cropOpened()
         // 맨 아래 버튼이 뒤로가기 줄과 겹치지 않게 시스템 바 만큼 띄우고, 조금 더 올린다
         UiInsets.apply(root, extraBottomDp = 12)
     }
@@ -71,7 +75,10 @@ class CropActivity : AppCompatActivity() {
     private fun loadSource(): Bitmap? = try {
         val path = intent.getStringExtra(EXTRA_PATH)
         val uri = intent.getStringExtra(EXTRA_URI)
+        val mem = pendingBitmap
         when {
+            // 게임 위 [캡처] — 메모리에 든 화면을 바로 받는다 (파일을 거치지 않아 빠르다)
+            intent.getBooleanExtra(EXTRA_FROM_MEMORY, false) && mem != null -> { pendingBitmap = null; mem }
             path != null -> BitmapFactory.decodeFile(path)
             uri != null -> contentResolver.openInputStream(Uri.parse(uri))?.use { BitmapFactory.decodeStream(it) }
             else -> null
@@ -115,6 +122,23 @@ class CropActivity : AppCompatActivity() {
             }, LinearLayout.LayoutParams(0, dp(40), 1f).also { it.setMargins(dp(2), 0, dp(2), dp(6)) })
         }
         col.addView(zoomRow)
+        // 마우스(뮤뮤플레이어 등)로도 쉽게 — 확대 막대를 끌거나, 사진 위에서 휠을 굴린다
+        zoomBar = SeekBar(this).apply {
+            setMax(70)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
+                    if (fromUser) cropView.zoomAt(1f + p / 10f)
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+        }
+        col.addView(TextView(this).apply {
+            text = "확대 막대 (마우스: 사진 위에서 휠 굴리기 / 막대 끌기)"
+            setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 11f
+        })
+        col.addView(zoomBar)
+        cropView.onZoomChanged = { z -> zoomBar?.progress = ((z - 1f) * 10f).toInt() }
 
         // 미리보기 + 보스 선택
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -221,6 +245,21 @@ class CropActivity : AppCompatActivity() {
         return try { Bitmap.createBitmap(src, l, t, w, h) } catch (_: Exception) { null }
     }
 
+    /**
+     * 자른 사진을 '짧은 변 1080' 기준 크기로 맞춘다 (인식도 같은 기준으로 한다).
+     * 그래서 폰에서 찍은 사진이 태블릿·뮤뮤플레이어에서도 그대로 맞는다.
+     * 이미 잘라 둔 작은 사진을 고른 경우(짧은 변 600 미만)는 그대로 둔다.
+     */
+    private fun normalized(crop: Bitmap): Bitmap {
+        val src = source ?: return crop
+        val short = min(src.width, src.height)
+        if (short < 600) return crop
+        val k = CaptureService.REF_SHORT_SIDE / short
+        if (kotlin.math.abs(k - 1.0) < 0.01) return crop
+        val w = max(1, (crop.width * k).toInt()); val h = max(1, (crop.height * k).toInt())
+        return Bitmap.createScaledBitmap(crop, w, h, true)
+    }
+
     private fun updatePreview() {
         if (!::preview.isInitialized) return
         preview.setImageBitmap(currentCrop())
@@ -233,12 +272,15 @@ class CropActivity : AppCompatActivity() {
             return
         }
         val boss = bossSpinner.selectedItem as? String ?: return
-        val name = TemplateStore(this).saveCrop(crop, boss, mode, asExtra)
+        val name = TemplateStore(this).saveCrop(normalized(crop), boss, mode, asExtra)
         if (name == null) {
             Toast.makeText(this, "저장하지 못했습니다", Toast.LENGTH_SHORT).show()
             return
         }
-        Bus.log("✂️ [사진 등록] '$name' 저장 (${crop.width}×${crop.height}, ${mode.label}) — 바로 인식에 쓰입니다")
+        Bus.log("✂️ [사진 등록] '$name' 저장 (${crop.width}×${crop.height}, ${mode.label}) — 바로 인식에 쓰입니다. " +
+                "사진첩 › 운빨보스알림 에도 넣었습니다.")
+        // 자르기 전 전체 화면도 사진첩에 남긴다 (나중에 다시 자르거나 기본 사진으로 모을 때)
+        source?.let { Backup.saveFullScreen(this, it, name.removeSuffix(".png")) }
         Toast.makeText(this, "$name 저장했습니다", Toast.LENGTH_SHORT).show()
         finish()
     }
@@ -250,6 +292,10 @@ class CropActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 게임 위 [캡처] 로 찍은 화면 (메모리로 넘긴다) */
+        @Volatile var pendingBitmap: Bitmap? = null
+
+        const val EXTRA_FROM_MEMORY = "mem"
         const val EXTRA_PATH = "path"
         const val EXTRA_URI = "uri"
         const val EXTRA_MODE = "mode"
@@ -295,6 +341,21 @@ class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -
         color = Color.WHITE; textSize = dp(12f); typeface = Typeface.DEFAULT_BOLD
     }
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+    /** 배율이 바뀌면 알려준다 (확대 막대 맞추기) */
+    var onZoomChanged: ((Float) -> Unit)? = null
+
+    /** 마우스 휠 — 뮤뮤플레이어처럼 마우스 하나로 쓸 때 확대·축소 */
+    override fun onGenericMotionEvent(ev: MotionEvent): Boolean {
+        if (ev.action == MotionEvent.ACTION_SCROLL) {
+            val v = ev.getAxisValue(MotionEvent.AXIS_VSCROLL)
+            if (v != 0f) {
+                zoomAt(zoom * (if (v > 0) 1.2f else 1f / 1.2f), ev.x, ev.y)
+                return true
+            }
+        }
+        return super.onGenericMotionEvent(ev)
+    }
 
     private val scaleDetector = android.view.ScaleGestureDetector(ctx,
         object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
@@ -348,6 +409,7 @@ class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -
         panY = top + h / 2f - height / 2f
         updateImgRect()
         invalidate()
+        onZoomChanged?.invoke(zoom)
     }
 
     /** 자를 네모가 화면 가운데 오도록 확대한다 */
@@ -360,7 +422,7 @@ class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -
         updateImgRect(); invalidate()
     }
 
-    fun resetZoom() { zoom = 1f; panX = 0f; panY = 0f; updateImgRect(); invalidate() }
+    fun resetZoom() { zoom = 1f; panX = 0f; panY = 0f; updateImgRect(); invalidate(); onZoomChanged?.invoke(zoom) }
 
     fun zoomBy(f: Float) = zoomAt(zoom * f)
 

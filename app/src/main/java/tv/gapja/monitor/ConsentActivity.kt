@@ -20,7 +20,7 @@ class ConsentActivity : AppCompatActivity() {
     ) { res ->
         if (res.resultCode == Activity.RESULT_OK && res.data != null) {
             AssetInstaller.installIfNeeded(this)
-            Bus.running = true
+            // 실제로 감시가 시작됐는지는 서비스가 정한다 (여기서 미리 '감시 중' 으로 표시하지 않는다)
             CaptureService.start(
                 this, res.resultCode, res.data!!, GameMode.from(Prefs.mode(this)),
                 Prefs.downscale(this), Prefs.intervalMs(this)

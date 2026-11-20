@@ -8,17 +8,19 @@ android {
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "tv.gapja.monitor"
+        // 설치되는 앱 이름표 (스토어·설정 화면에 보이는 값). 코드 폴더 이름(namespace)과는 따로다.
+        applicationId = "com.unbbal.bossalarm"
         // 화면 캡처(MediaProjection)와 포그라운드 서비스 타입이 필요하므로 최소 29.
         minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.3"
+        versionCode = 5
+        versionName = "1.4"
 
         // OpenCV 네이티브 라이브러리를 필요한 ABI만 담아 APK 크기를 줄인다.
         // (요즘 안드로이드 폰은 전부 arm64-v8a 다. 구형 32비트 폰도 쓰려면 armeabi-v7a 를 남겨 둔다)
         ndk {
-            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+            // 폰·태블릿(ARM) + 뮤뮤플레이어 같은 PC 앱플레이어(x86_64)
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a", "x86_64")
         }
     }
 

@@ -37,6 +37,7 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlin.math.max
+import kotlin.math.min
 
 /**
  * 화면을 계속 들여다보며 보스를 찾아내는 서비스.
@@ -75,7 +76,7 @@ class CaptureService : Service() {
     private var intervalMs = 150L
 
     /** [캡처] 버튼 — 다음 프레임을 사진으로 저장한 뒤 부를 함수 */
-    @Volatile private var pendingSnap: ((File?) -> Unit)? = null
+    @Volatile private var pendingSnap: ((Bitmap?) -> Unit)? = null
 
     // ── 로비 인식 (PC monitor 와 같다) ──
     /** 다음 로비 검사 시각 */
@@ -117,6 +118,8 @@ class CaptureService : Service() {
         seq = seqRepo.load()
         speaker = Speaker(this)
         startForeground(NOTIF_ID, buildNotification("준비 중"))
+        // 메인 화면을 거치지 않고(게임 위 [시작]) 켜질 수도 있으니 여기서도 OpenCV 를 불러 둔다
+        try { org.opencv.android.OpenCVLoader.initLocal() } catch (_: Throwable) {}
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -128,6 +131,7 @@ class CaptureService : Service() {
                 downscale = intent.getDoubleExtra(EXTRA_DOWNSCALE, 0.5)
                 intervalMs = intent.getLongExtra(EXTRA_INTERVAL, 150L)
                 if (data != null) beginCapture(code, data, mode)
+                else failStart("화면 공유 정보가 비어 있습니다.")
             }
             // 감시 루프는 capture 스레드에서 판 상태를 읽고 쓰므로,
             // 판 상태를 바꾸는 동작도 같은 스레드에서 차례로 처리한다 (동시 접근 충돌 방지)
@@ -183,7 +187,7 @@ class CaptureService : Service() {
             mgr.getMediaProjection(code, data)
         } catch (e: Exception) {
             Log.e(TAG, "동의 토큰이 유효하지 않습니다", e); null
-        } ?: run { Bus.log("❌ 화면 캡처 권한을 받지 못했습니다. 다시 시작해 주세요."); return }
+        } ?: run { failStart("화면 캡처 권한을 받지 못했습니다."); return }
 
         projection = proj
         session = GameSession(mode)
@@ -201,14 +205,24 @@ class CaptureService : Service() {
         // 감시 영역 = 폰(태블릿) 화면 전체 (상태바·내비게이션 바까지 포함한 실제 크기)
         val dm: DisplayMetrics = resources.displayMetrics
         val (w, h) = screenSize()
-        reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
-        virtualDisplay = proj.createVirtualDisplay(
-            "GapjaCapture", w, h, dm.densityDpi,
-            DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
-            reader!!.surface, null, handlerOn()
-        )
+        try {
+            reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+            virtualDisplay = proj.createVirtualDisplay(
+                "BossCapture", w, h, dm.densityDpi,
+                DisplayManager.VIRTUAL_DISPLAY_FLAG_AUTO_MIRROR,
+                reader!!.surface, null, handlerOn()
+            )
+        } catch (e: Exception) {
+            Log.e(TAG, "가상 화면 생성 실패", e)
+            try { reader?.close() } catch (_: Exception) {}
+            try { proj.stop() } catch (_: Exception) {}
+            reader = null; projection = null
+            failStart("화면을 읽을 준비를 하지 못했습니다. (${e.javaClass.simpleName})")
+            return
+        }
 
         running = true
+        Bus.running = true
         Bus.mode = mode
         Bus.onState(session, seq)
         OverlayService.start(this)
@@ -219,6 +233,19 @@ class CaptureService : Service() {
         Bus.log("▶ 감시를 시작했습니다. (${w}×${h}, 축소 ${(downscale * 100).toInt()}%, " +
                 "${intervalMs}ms 간격, 템플릿 ${templates.count()}장)")
         handlerOn().post(loop)
+    }
+
+    /**
+     * 시작에 실패했을 때 — '감시 중' 표시를 되돌리고 서비스를 내린다.
+     * 그래야 메인 화면 [시작] 을 다시 누를 수 있다.
+     */
+    private fun failStart(why: String) {
+        Bus.log("❌ $why [시작] 을 다시 눌러 주세요.")
+        running = false
+        Bus.running = false
+        Bus.onState(session, seq)
+        try { stopForeground(STOP_FOREGROUND_REMOVE) } catch (_: Exception) {}
+        stopSelf()
     }
 
     /** 지금 화면의 실제 크기 (회전하면 가로·세로가 바뀐다) */
@@ -314,16 +341,20 @@ class CaptureService : Service() {
             val plane = img.planes[0]
             pendingSnap?.let { cb ->
                 pendingSnap = null
-                val f = saveSnapshot(plane, img.width, img.height)
+                val f = grabSnapshot(plane, img.width, img.height)
                 plane.buffer.rewind()
                 cb(f)
             }
             // 일시정지 중에는 캡처(사진 찍기)만 되고 인식은 쉰다
             if (paused) return
             val full = CvOps.fromRgba(plane.buffer, img.width, img.height, plane.rowStride)
-            screen = if (downscale >= 0.999) full else {
-                val s = CvOps.resize(full, (img.width * downscale).toInt(),
-                    (img.height * downscale).toInt())
+            // 화면을 '짧은 변 1080' 기준으로 맞춘 뒤 축소한다.
+            // 그래서 폰·태블릿·뮤뮤플레이어처럼 해상도가 달라도 같은 보스 사진으로 인식된다.
+            // (자르기 화면도 사진을 같은 기준으로 맞춰서 저장한다)
+            val eff = downscale * refScale(img.width, img.height)
+            screen = if (kotlin.math.abs(eff - 1.0) < 0.001) full else {
+                val s = CvOps.resize(full, max(1, (img.width * eff).toInt()),
+                    max(1, (img.height * eff).toInt()))
                 full.release(); s
             }
         } finally {
@@ -401,6 +432,15 @@ class CaptureService : Service() {
                 session.mode = newMode
                 streak.clear()
                 Prefs.setMode(this, newMode.key)
+                Bus.mode = newMode
+                // 게임 중에도 바로 알 수 있게 화면에 잠깐 띄운다
+                android.os.Handler(android.os.Looper.getMainLooper()).post {
+                    try {
+                        android.widget.Toast.makeText(this,
+                            if (newMode == GameMode.INVASION) "🔥 침공로비 감지 → 침공 모드" else "🟢 태초로비 감지 → 일반(태초) 모드",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                    } catch (_: Exception) {}
+                }
                 updateNotification("감시 중 · ${newMode.label} (${PcDefaults.speedLabel(newMode, Prefs.speedLock(this))})")
             }
             if (session.activationOrder.isNotEmpty()) {
@@ -709,8 +749,14 @@ class CaptureService : Service() {
 
     private fun pct(v: Double) = "%.1f%%".format(v * 100)
 
-    /** 지금 화면 한 장을 컬러 PNG 로 저장한다 (보스 사진을 직접 잘라 등록할 때 쓴다) */
-    private fun saveSnapshot(plane: android.media.Image.Plane, width: Int, height: Int): File? {
+    /** 짧은 변을 1080 으로 맞추는 배율 */
+    private fun refScale(w: Int, h: Int): Double = REF_SHORT_SIDE / min(w, h).toDouble()
+
+    /**
+     * 지금 화면 한 장을 컬러 사진으로 떠 온다 (보스 사진을 직접 잘라 등록할 때 쓴다).
+     * 파일로 저장했다가 다시 읽으면 1초 가까이 걸려서, 메모리에 든 채로 자르기 화면에 넘긴다.
+     */
+    private fun grabSnapshot(plane: android.media.Image.Plane, width: Int, height: Int): Bitmap? {
         return try {
             val pixelStride = plane.pixelStride
             val rowPadding = plane.rowStride - pixelStride * width
@@ -718,14 +764,10 @@ class CaptureService : Service() {
             buf.rewind()
             val full = Bitmap.createBitmap(width + rowPadding / pixelStride, height, Bitmap.Config.ARGB_8888)
             full.copyPixelsFromBuffer(buf)
-            val bmp = if (rowPadding == 0) full else Bitmap.createBitmap(full, 0, 0, width, height)
-            val out = File(cacheDir, "snap.png")
-            out.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
-            if (bmp !== full) full.recycle()
-            bmp.recycle()
-            out
-        } catch (e: Exception) {
-            Log.w(TAG, "캡처 저장 실패", e); null
+            if (rowPadding == 0) full
+            else Bitmap.createBitmap(full, 0, 0, width, height).also { full.recycle() }
+        } catch (e: Throwable) {
+            Log.w(TAG, "캡처 실패", e); null
         }
     }
 
@@ -754,7 +796,7 @@ class CaptureService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return Notification.Builder(this, CH_ID)
-            .setContentTitle("갑자TV 관제탑")
+            .setContentTitle("운빨보스알림")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentIntent(open)
@@ -851,7 +893,13 @@ class CaptureService : Service() {
          * 다음 프레임을 사진으로 찍어 달라고 요청한다.
          * 감시 중이 아니면 바로 null 을 돌려준다.
          */
-        fun requestSnapshot(cb: (File?) -> Unit) {
+        /** 인식 기준 화면 크기 — 짧은 변 1080 (1080×1920 기준) */
+        const val REF_SHORT_SIDE = 1080.0
+
+        /** 서비스가 살아 있는지 */
+        fun isAlive(): Boolean = instance != null
+
+        fun requestSnapshot(cb: (Bitmap?) -> Unit) {
             val s = instance
             if (s == null || !s.running) { cb(null); return }
             s.handlerOn().post { s.pendingSnap = cb }

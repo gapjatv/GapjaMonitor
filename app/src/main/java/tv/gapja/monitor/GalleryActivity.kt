@@ -48,8 +48,8 @@ class GalleryActivity : AppCompatActivity() {
         val store = TemplateStore(this)
         col.addView(TextView(this).apply {
             text = if (Prefs.usePcTemplates(this@GalleryActivity))
-                "지금은 PC 사진을 함께 쓰는 중입니다. 아래 ✔ 는 폰에서 직접 등록한 사진이 있는 항목이에요."
-            else "지금은 폰에서 등록한 사진만 씁니다. ○ 인 항목은 아직 인식되지 않으니 [보스설정 → 캡처] 로 등록해 주세요."
+                "지금은 기본 사진을 함께 쓰는 중입니다. 아래 ✔ 는 직접 등록한 사진이 있는 항목이에요."
+            else "지금은 직접 등록한 사진만 씁니다. ○ 인 항목은 아직 인식되지 않으니 [보스설정 → 캡처] 로 등록해 주세요."
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
             setPadding(0, dp(6), 0, 0)
         })
