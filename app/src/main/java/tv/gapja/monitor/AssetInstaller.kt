@@ -9,16 +9,19 @@ import java.io.File
  *
  *   assets/templates/ → templates/  인식용 캡처 사진 (PC '캡쳐된 보스 사진')
  *   assets/display/   → display/    게임 위에 띄울 보스 사진 (PC 'ui_images')
- *   assets/voices/    → voices/     보스 음성·80R 멘트 MP3 (PC 'voices')
+ *   assets/voices/    → voices/     보스 음성·80R 멘트·경보 멘트 MP3 (PC 'voices')
+ *   assets/alarms/    → alarms/     위험 경보음 MP3 (PC 'sounds/{보스}.mp3')
+ *
+ * 인식용 사진에는 로비 화면 3종(태초로비·침공로비·공통로비)과 배속 표시(1배속상태·2배속상태)도 들어 있다.
  *
  * 이미 있는 파일은 덮어쓰지 않는다 — 사용자가 직접 캡처해서 바꾼 사진을 지키기 위해서다.
  */
 object AssetInstaller {
 
-    /** 자료를 바꿔서 새로 넣을 때 올린다 */
-    private const val VERSION = 1
+    /** 자료를 바꿔서 새로 넣을 때 올린다 (2: 로비 3종·배속 사진·경보음·경보 멘트 추가) */
+    private const val VERSION = 2
 
-    private val FOLDERS = listOf("templates", "display", "voices")
+    private val FOLDERS = listOf("templates", "display", "voices", "alarms")
 
     fun installIfNeeded(ctx: Context): Int {
         if (Prefs.assetsVersion(ctx) >= VERSION) return 0
@@ -45,6 +48,12 @@ object AssetInstaller {
 
     /** 게임 위 표시용 보스 사진 파일 */
     fun displayFile(ctx: Context, boss: String): File = File(File(ctx.filesDir, "display"), "$boss.png")
+
+    /** 위험 경보음 파일 (PC sounds/{보스}.mp3) */
+    fun alarmFile(ctx: Context, boss: String): File = File(File(ctx.filesDir, "alarms"), "$boss.mp3")
+
+    fun alarmCount(ctx: Context): Int =
+        File(ctx.filesDir, "alarms").listFiles { f -> f.name.lowercase().endsWith(".mp3") }?.size ?: 0
 
     fun displayCount(ctx: Context): Int =
         File(ctx.filesDir, "display").listFiles { f -> f.name.endsWith(".png") }?.size ?: 0

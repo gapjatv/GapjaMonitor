@@ -22,7 +22,7 @@
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:screenOrientation="portrait">
+            android:resizeableActivity="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -38,8 +38,18 @@
         <activity
             android:name=".CropActivity"
             android:exported="false"
-            android:label="보스 사진 만들기"
-            android:screenOrientation="portrait" />
+            android:label="보스 사진 만들기" />
+
+        <!-- 저장된 보스 사진 · 로비 화면 보기 -->
+        <activity
+            android:name=".GalleryActivity"
+            android:exported="false"
+            android:label="저장된 보스 사진" />
+
+        <!--
+            태블릿(갤럭시 탭 등)에서도 쓰도록 화면 방향을 고정하지 않는다.
+            화면을 돌리면 CaptureService 가 캡처 크기를 다시 맞춘다.
+        -->
 
         <!--
             화면 캡처 서비스.

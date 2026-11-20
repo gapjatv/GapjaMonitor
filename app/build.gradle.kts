@@ -12,13 +12,26 @@ android {
         // 화면 캡처(MediaProjection)와 포그라운드 서비스 타입이 필요하므로 최소 29.
         minSdk = 29
         targetSdk = 35
-        versionCode = 2
-        versionName = "1.1"
+        versionCode = 3
+        versionName = "1.2"
 
         // OpenCV 네이티브 라이브러리를 필요한 ABI만 담아 APK 크기를 줄인다.
         // (요즘 안드로이드 폰은 전부 arm64-v8a 다. 구형 32비트 폰도 쓰려면 armeabi-v7a 를 남겨 둔다)
         ndk {
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
+        }
+    }
+
+    // ⚠️ 서명 키를 고정한다.
+    //    GitHub 서버는 빌드할 때마다 디버그 키를 새로 만들기 때문에, 키를 고정하지 않으면
+    //    새 버전을 깔 때 '기존 앱과 충돌' 오류가 나서 지우고 다시 깔아야 했다.
+    //    debug.keystore 는 안드로이드 표준 디버그 키 형식(비밀번호 android)이다.
+    signingConfigs {
+        getByName("debug") {
+            storeFile = file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
         }
     }
 

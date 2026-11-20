@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "17"
@@ -35,16 +35,23 @@ jobs:
       - name: Build debug APK
         run: gradle assembleDebug --stacktrace --no-daemon
 
+      - name: Read version
+        id: ver
+        run: |
+          V=$(grep -oP 'versionName = "\K[^"]+' app/build.gradle.kts)
+          echo "v=$V" >> "$GITHUB_OUTPUT"
+          echo "version: $V"
+
       - name: Rename APK
         run: |
           mkdir -p out
-          cp app/build/outputs/apk/debug/app-debug.apk out/GapjaMonitor-v1.1.apk
+          cp app/build/outputs/apk/debug/app-debug.apk out/GapjaMonitor-v${{ steps.ver.outputs.v }}.apk
           ls -la out
 
       - uses: actions/upload-artifact@v4
         with:
           name: GapjaMonitor-apk
-          path: out/GapjaMonitor-v1.1.apk
+          path: out/GapjaMonitor-v${{ steps.ver.outputs.v }}.apk
           retention-days: 30
 
       # 폰에서 바로 받을 수 있게 Releases 페이지에도 올린다 (같은 버전이면 파일만 교체)
@@ -52,19 +59,20 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view v1.1 >/dev/null 2>&1 || \
-            gh release create v1.1 --title "관제탑 안드로이드판 v1.1" --notes "폰에서 이 APK를 받아 설치하세요." --target "$GITHUB_SHA"
-          gh release upload v1.1 out/GapjaMonitor-v1.1.apk --clobber
+          V=v${{ steps.ver.outputs.v }}
+          gh release view $V >/dev/null 2>&1 || \
+            gh release create $V --title "관제탑 안드로이드판 $V" --notes "폰에서 이 APK를 받아 설치하세요." --target "$GITHUB_SHA"
+          gh release upload $V out/GapjaMonitor-$V.apk --clobber
 
       # 최신 APK 를 'apk' 브랜치에도 보관한다
       - name: Store APK on apk branch
         run: |
           git config user.name "github-actions"
           git config user.email "github-actions@users.noreply.github.com"
-          mkdir -p /tmp/apkbr && cp out/GapjaMonitor-v1.1.apk /tmp/apkbr/
+          mkdir -p /tmp/apkbr && cp out/*.apk /tmp/apkbr/
           git checkout --orphan apk-tmp
           git rm -rfq . || true
-          cp /tmp/apkbr/GapjaMonitor-v1.1.apk .
-          git add GapjaMonitor-v1.1.apk
+          cp /tmp/apkbr/*.apk .
+          git add *.apk
           git commit -qm "APK ${GITHUB_SHA::7}"
           git push -f origin apk-tmp:apk

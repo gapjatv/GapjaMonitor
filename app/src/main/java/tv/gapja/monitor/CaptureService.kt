@@ -7,6 +7,7 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.hardware.display.DisplayManager
@@ -18,6 +19,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.IBinder
+import android.os.SystemClock
 import android.util.DisplayMetrics
 import android.util.Log
 import android.view.WindowManager
@@ -75,6 +77,27 @@ class CaptureService : Service() {
     /** [캡처] 버튼 — 다음 프레임을 사진으로 저장한 뒤 부를 함수 */
     @Volatile private var pendingSnap: ((File?) -> Unit)? = null
 
+    // ── 로비 인식 (PC monitor 와 같다) ──
+    /** 다음 로비 검사 시각 */
+    private var lobbyNextCheck = 0L
+    /** 로비로 초기화한 직후 잠깐 보스 검사를 쉰다 (PC: 2초) */
+    private var lobbyQuietUntil = 0L
+
+    // ── 배속 (배속 고정을 끈 경우만 화면에서 인식) ──
+    private var speedNextCheck = 0L
+    /** 지금 게임 배속 — 고정이면 2 */
+    private var currentSpeed = 2
+
+    // ── 위험 경보 타이머 (PC schedule_warning) ──
+    private class Warn(val boss: String, val mode: GameMode, val base: Double, val gen: Int) {
+        var progress = 0.0
+        var lastT = SystemClock.elapsedRealtime()
+    }
+    private val warns = ArrayList<Warn>()
+    /** 판이 바뀔 때마다 올라간다 — 이전 판 경보가 새 판에 울리지 않게 */
+    private var gameGen = 0
+    private var warnTickerPosted = false
+
     override fun onCreate() {
         super.onCreate()
         instance = this
@@ -100,14 +123,27 @@ class CaptureService : Service() {
             // 판 상태를 바꾸는 동작도 같은 스레드에서 차례로 처리한다 (동시 접근 충돌 방지)
             ACTION_STOP -> if (running) handlerOn().post { stopEverything() } else stopEverything()
             ACTION_UNDO -> handlerOn().post { undoLast() }
-            ACTION_RESET -> handlerOn().post { endGame() }
+            ACTION_RESET -> handlerOn().post {
+                if (session.activationOrder.isNotEmpty()) Bus.log("🔄 [리셋] 보스 사진을 초기화합니다.")
+                endGame()
+            }
+            // [보스설정 → 끄기] 감시·오버레이를 멈추고 앱을 닫는다
+            ACTION_EXIT -> {
+                val doExit = {
+                    if (running || projection != null) stopEverything()
+                    else { OverlayService.stop(this); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
+                    Bus.exitApp()
+                }
+                if (running) handlerOn().post { doExit() } else doExit()
+            }
             ACTION_MODE -> {
                 val m = GameMode.from(intent.getStringExtra(EXTRA_MODE))
                 handlerOn().post {
                     session.mode = m
                     streak.clear()
                     Bus.onState(session, seq)
-                    updateNotification("감시 중 · ${m.label} (${PcDefaults.speedLabel(m)})")
+                    Prefs.setMode(this, m.key)
+                    updateNotification("감시 중 · ${m.label} (${PcDefaults.speedLabel(m, Prefs.speedLock(this))})")
                 }
             }
         }
@@ -136,16 +172,9 @@ class CaptureService : Service() {
             }
         }, handlerOn())
 
-        // 감시 영역 = 폰 화면 전체 (상태바·내비게이션 바까지 포함한 실제 크기)
+        // 감시 영역 = 폰(태블릿) 화면 전체 (상태바·내비게이션 바까지 포함한 실제 크기)
         val dm: DisplayMetrics = resources.displayMetrics
-        var w = dm.widthPixels
-        var h = dm.heightPixels
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            try {
-                val b = getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
-                w = b.width(); h = b.height()
-            } catch (_: Exception) {}
-        }
+        val (w, h) = screenSize()
         reader = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
         virtualDisplay = proj.createVirtualDisplay(
             "GapjaCapture", w, h, dm.densityDpi,
@@ -157,10 +186,52 @@ class CaptureService : Service() {
         Bus.mode = mode
         Bus.onState(session, seq)
         OverlayService.start(this)
-        updateNotification("감시 중 · ${session.mode.label} (${PcDefaults.speedLabel(session.mode)})")
+        currentSpeed = if (Prefs.speedLock(this)) 2 else 1
+        lobbyNextCheck = 0L; lobbyQuietUntil = 0L
+        updateNotification("감시 중 · ${session.mode.label} (${PcDefaults.speedLabel(session.mode, Prefs.speedLock(this))})")
         Bus.log("▶ 감시를 시작했습니다. (${w}×${h}, 축소 ${(downscale * 100).toInt()}%, " +
                 "${intervalMs}ms 간격, 템플릿 ${templates.count()}장)")
         handlerOn().post(loop)
+    }
+
+    /** 지금 화면의 실제 크기 (회전하면 가로·세로가 바뀐다) */
+    private fun screenSize(): Pair<Int, Int> {
+        val dm: DisplayMetrics = resources.displayMetrics
+        var w = dm.widthPixels
+        var h = dm.heightPixels
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val b = getSystemService(WindowManager::class.java).maximumWindowMetrics.bounds
+                if (b.width() > 0 && b.height() > 0) { w = b.width(); h = b.height() }
+            } catch (_: Exception) {}
+        }
+        return w to h
+    }
+
+    /**
+     * 화면이 회전하면(태블릿 가로/세로) 캡처 크기를 다시 맞춘다.
+     * 그대로 두면 회전한 화면이 찌그러지거나 검은 띠가 생겨 인식이 안 된다.
+     */
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        if (running) handlerOn().postDelayed({ resizeCapture() }, 300)
+    }
+
+    private fun resizeCapture() {
+        val vd = virtualDisplay ?: return
+        val (w, h) = screenSize()
+        val old = reader
+        if (old != null && old.width == w && old.height == h) return
+        try {
+            val nr = ImageReader.newInstance(w, h, PixelFormat.RGBA_8888, 2)
+            vd.resize(w, h, resources.displayMetrics.densityDpi)
+            vd.surface = nr.surface
+            reader = nr
+            try { old?.close() } catch (_: Exception) {}
+            Bus.log("🔄 화면이 회전해서 감시 크기를 다시 맞췄습니다. (${w}×${h})")
+        } catch (e: Exception) {
+            Log.w(TAG, "회전 대응 실패", e)
+        }
     }
 
     private fun stopEverything() {
@@ -226,6 +297,21 @@ class CaptureService : Service() {
         val scr = screen ?: return
         try {
             val now = System.currentTimeMillis()
+
+            // ① 로비 화면 — 인식되면 모드를 맞추고 보스 사진을 초기화한다
+            if (now >= lobbyNextCheck) {
+                lobbyNextCheck = now + LOBBY_CHECK_MS
+                if (checkLobby(scr, now)) return
+            }
+            if (now < lobbyQuietUntil) return
+
+            // ② 배속 — 배속 고정을 끈 경우만 화면에서 1배속/2배속을 읽는다
+            if (!Prefs.speedLock(this) && now >= speedNextCheck) {
+                speedNextCheck = now + SPEED_CHECK_MS
+                checkSpeed(scr)
+            }
+
+            // ③ 보스
             for (name in BossCatalog.watchList(session.mode)) {
                 if (!running) break
                 if (!session.shouldWatch(name, now)) continue
@@ -237,6 +323,82 @@ class CaptureService : Service() {
             }
         } finally {
             scr.release()
+        }
+    }
+
+    /**
+     * 로비 화면 3종을 찾는다. (PC monitor 의 로비 인식과 같다)
+     *
+     *   태초로비 → 태초 모드로 바꾸고 초기화
+     *   침공로비 → 침공 모드로 바꾸고 초기화
+     *   공통로비 → 모드는 그대로, 초기화만 (로비까지 안 가고 '다시하기'를 누르는 화면)
+     *
+     * @return 로비가 보였으면 true (이번 프레임은 보스 검사를 건너뛴다)
+     */
+    private fun checkLobby(scr: Mat, now: Long): Boolean {
+        for ((lobby, lobbyMode) in listOf(
+            PcDefaults.LOBBY_NORMAL to GameMode.NORMAL,
+            PcDefaults.LOBBY_INVASION to GameMode.INVASION,
+            PcDefaults.LOBBY_COMMON to null
+        )) {
+            val files = listOf("$lobby.png") + templates.extraShots(lobby)
+            var best = 0.0
+            for (fn in files) {
+                val t = templates.get(fn) ?: continue
+                val r = matcher.multiScale(scr, t, PcDefaults.LOBBY_THRESHOLD, downscale = downscale)
+                if (r.score > best) best = r.score
+                if (best >= PcDefaults.LOBBY_THRESHOLD) break
+            }
+            if (best < PcDefaults.LOBBY_THRESHOLD) continue
+
+            val newMode = lobbyMode ?: session.mode
+            val modeChanged = newMode != session.mode
+            if (modeChanged) {
+                session.mode = newMode
+                streak.clear()
+                Prefs.setMode(this, newMode.key)
+                updateNotification("감시 중 · ${newMode.label} (${PcDefaults.speedLabel(newMode, Prefs.speedLock(this))})")
+            }
+            if (session.activationOrder.isNotEmpty()) {
+                Bus.log(if (lobbyMode == null)
+                    "🏠 [$lobby 인식 → ${newMode.label} 모드 유지] 보스 사진을 초기화합니다. (정확도 ${pct(best)})"
+                else
+                    "🏠 [$lobby 귀환 → ${newMode.label} 모드] 보스 사진을 초기화합니다. (정확도 ${pct(best)})")
+                endGame()
+                lobbyQuietUntil = now + LOBBY_QUIET_MS
+            } else if (modeChanged) {
+                Bus.log("🏠 [$lobby 인식] ${newMode.label} 모드로 바꿨습니다.")
+                Bus.onState(session, seq)
+            }
+            return true
+        }
+        return false
+    }
+
+    /** 1배속/2배속 표시를 읽는다 (PC monitor 의 배속 인식과 같은 판정) */
+    private fun checkSpeed(scr: Mat) {
+        val inv = session.mode == GameMode.INVASION
+        fun pick(n: String): String =
+            if (inv && templates.get("침공_$n.png") != null) "침공_$n.png" else "$n.png"
+        val t2 = templates.get(pick("2배속상태"))
+        val t1 = templates.get(pick("1배속상태"))
+        val th = PcDefaults.SPEED_THRESHOLD
+        val s2 = t2?.let { matcher.multiScale(scr, it, th, downscale = downscale).score } ?: 0.0
+        val s1 = t1?.let { matcher.multiScale(scr, it, th, downscale = downscale).score } ?: 0.0
+        val newSpeed = when {
+            s2 >= th && s1 >= th -> when {
+                s2 - s1 >= PcDefaults.SPEED_MARGIN -> 2
+                s1 - s2 >= PcDefaults.SPEED_MARGIN -> 1
+                else -> currentSpeed
+            }
+            s2 >= th -> 2
+            s1 >= th -> 1
+            else -> currentSpeed
+        }
+        if (newSpeed != currentSpeed) {
+            currentSpeed = newSpeed
+            Bus.log(if (newSpeed == 2) "⏩ [게임 속도 감지] 2배속 (2x ${pct(s2)} / 1x ${pct(s1)})"
+                    else "▶️ [게임 속도 감지] 1배속 (1x ${pct(s1)} / 2x ${pct(s2)})")
         }
     }
 
@@ -338,6 +500,7 @@ class CaptureService : Service() {
         Bus.log("🎯 [$tag] $name 인식 (정확도 ${pct(score)})")
         Bus.onState(session, seq)
         speaker.sayBoss(name)
+        scheduleWarning(name, session.mode)
 
         // 침공특수보스 2종이 모이면 80R 확정 — 확률이 아니라 소거법이라 100%다
         val target = session.tryDeduce80R()
@@ -408,6 +571,73 @@ class CaptureService : Service() {
         Bus.onState(session, seq)
     }
 
+    // ── 위험 경보 ────────────────────────────────────────────────
+
+    /**
+     * 보스가 인식되면 경보 타이머를 건다. (PC schedule_warning 과 같은 계산)
+     *
+     * 설정한 시간은 '게임 안 시간'이다. 실제로는 배속만큼 빨리 흐른다.
+     *   • 배속 고정(기본): 태초는 항상 2배속, 침공은 앞 30% 만 2배속이고 나머지는 1배속
+     *   • 배속 자동 인식: 화면에서 읽은 배속 (태초가 1배속으로 잡히면 2배속으로 보정)
+     * 보스가 되돌리기·초기화로 사라지면 타이머도 취소된다.
+     */
+    private fun scheduleWarning(name: String, mode: GameMode) {
+        if (!Prefs.warningEnabled(this) || !Prefs.voiceEnabled(this)) return
+        val base = Prefs.warnDelay(this, mode, name).toDouble()
+        val locked = Prefs.speedLock(this)
+        val expect = if (locked) {
+            if (mode == GameMode.INVASION) {
+                val er = PcDefaults.INVASION_EARLY_2X_PCT / 100.0
+                base * er / 2.0 + base * (1 - er)
+            } else base / 2.0
+        } else base / max(1, if (mode == GameMode.NORMAL) max(2, currentSpeed) else currentSpeed)
+        Bus.log("⏳ [$name] (${mode.label}) 위험 경보 타이머 — 목표 ${base.toInt()}초 / " +
+                "${PcDefaults.speedLabel(mode, locked)} → 약 ${expect.toInt()}초 뒤 알림")
+        warns.removeAll { it.boss == name }
+        warns.add(Warn(name, mode, base, gameGen))
+        if (!warnTickerPosted) {
+            warnTickerPosted = true
+            handlerOn().postDelayed(warnTicker, WARN_TICK_MS)
+        }
+    }
+
+    private val warnTicker = object : Runnable {
+        override fun run() {
+            warnTickerPosted = false
+            val now = SystemClock.elapsedRealtime()
+            val locked = Prefs.speedLock(this@CaptureService)
+            val iter = warns.iterator()
+            while (iter.hasNext()) {
+                val w = iter.next()
+                if (w.gen != gameGen || !session.isActive(w.boss)) {
+                    if (w.gen == gameGen) Bus.log("🛑 [${w.boss}] 목록에서 빠져 경보 타이머를 취소했습니다.")
+                    iter.remove(); continue
+                }
+                val speed = if (locked) {
+                    if (w.mode == GameMode.INVASION) {
+                        val early = w.base * PcDefaults.INVASION_EARLY_2X_PCT / 100.0
+                        if (w.progress < early) 2 else 1
+                    } else 2
+                } else {
+                    if (w.mode == GameMode.NORMAL && currentSpeed == 1) 2 else currentSpeed
+                }
+                val elapsed = (now - w.lastT) / 1000.0
+                w.lastT = now
+                w.progress += elapsed * speed
+                if (w.progress >= w.base) {
+                    iter.remove()
+                    val what = speaker.playWarning(w.boss)
+                    Bus.log("🚨 [${w.boss}] (${w.mode.label}) 위험 경보! " +
+                            (what ?: "(경보음·경보 멘트가 없어 소리 없이 넘어갑니다)"))
+                }
+            }
+            if (warns.isNotEmpty() && running) {
+                warnTickerPosted = true
+                handlerOn().postDelayed(this, WARN_TICK_MS)
+            }
+        }
+    }
+
     /** 판이 끝났을 때 — 순서를 기록하고 초기화한다 */
     private fun endGame() {
         if (session.shouldRecord()) {
@@ -422,6 +652,11 @@ class CaptureService : Service() {
         }
         session.reset()
         streak.clear()
+        // 진행 중이던 경보 타이머·대기 중인 안내도 함께 비운다 (PC reset_game 과 같다)
+        gameGen++
+        warns.clear()
+        speaker.clearQueue()
+        currentSpeed = if (Prefs.speedLock(this)) 2 else 1
         Bus.onState(session, seq)
     }
 
@@ -530,6 +765,17 @@ class CaptureService : Service() {
             )
         }
 
+        const val ACTION_EXIT = "tv.gapja.monitor.EXIT"
+
+        /** 로비 검사 간격 (PC 는 0.5초마다) */
+        private const val LOBBY_CHECK_MS = 600L
+        /** 로비로 초기화한 뒤 쉬는 시간 (PC: 2초) */
+        private const val LOBBY_QUIET_MS = 2000L
+        /** 배속 검사 간격 */
+        private const val SPEED_CHECK_MS = 600L
+        /** 경보 타이머 간격 (PC: 0.5초) */
+        private const val WARN_TICK_MS = 500L
+
         /** 지금 돌고 있는 서비스 (캡처 요청용) */
         @Volatile private var instance: CaptureService? = null
 
@@ -543,7 +789,15 @@ class CaptureService : Service() {
             s.handlerOn().post { s.pendingSnap = cb }
         }
 
+        /**
+         * 돌고 있는 서비스에 명령을 보낸다.
+         *
+         * ⚠️ 서비스가 안 돌고 있을 때 보내면 안 된다. 그러면 서비스가 새로 켜지면서
+         *    onCreate 에서 startForeground(mediaProjection) 를 부르는데, 화면 공유 동의가
+         *    없으면 Android 14부터 앱이 죽는다. (모드·되돌리기 버튼을 시작 전에 누를 때)
+         */
         fun send(ctx: Context, action: String, mode: GameMode? = null) {
+            if (instance == null) return
             val i = Intent(ctx, CaptureService::class.java).setAction(action)
             if (mode != null) i.putExtra(EXTRA_MODE, mode.key)
             try { ctx.startService(i) } catch (_: Exception) {}

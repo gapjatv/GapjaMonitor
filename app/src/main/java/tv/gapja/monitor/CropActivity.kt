@@ -37,6 +37,9 @@ import kotlin.math.min
  * 저장 방식
  *   • 보조 사진 추가: {보스}_2.png (침공이면 침공_{보스}_2.png) — 기존 사진은 그대로
  *   • 기본 사진 교체: {보스}.png 를 덮어쓴다
+ *
+ * 이 화면에서 바로 [태초]/[침공] 을 고를 수 있다. 고른 모드에 맞는 보스와
+ * 로비 화면(태초: 태초로비·공통로비 / 침공: 침공로비·공통로비)이 목록에 나온다.
  */
 class CropActivity : AppCompatActivity() {
 
@@ -57,7 +60,10 @@ class CropActivity : AppCompatActivity() {
             Toast.makeText(this, "사진을 불러오지 못했습니다", Toast.LENGTH_SHORT).show()
             finish(); return
         }
-        setContentView(buildUi())
+        val root = buildUi()
+        setContentView(root)
+        // 맨 아래 버튼이 뒤로가기 줄과 겹치지 않게 시스템 바 만큼 띄우고, 조금 더 올린다
+        UiInsets.apply(root, extraBottomDp = 12)
     }
 
     private fun loadSource(): Bitmap? = try {
@@ -103,14 +109,30 @@ class CropActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), 0, 0, 0)
         }
+        // 모드 — 여기서 바로 고른다
+        val modeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val normalBtn = Button(this); val invBtn = Button(this)
+        bossSpinner = Spinner(this)
+        fun syncMode() {
+            normalBtn.setBackgroundColor(Color.parseColor(if (mode == GameMode.NORMAL) "#2C8C6E" else "#2A3644"))
+            invBtn.setBackgroundColor(Color.parseColor(if (mode == GameMode.INVASION) "#8E44AD" else "#2A3644"))
+            val prev = bossSpinner.selectedItem as? String
+            val names = targetsFor(mode)
+            bossSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
+            if (prev != null && prev in names) bossSpinner.setSelection(names.indexOf(prev))
+        }
+        for ((b, t, m) in listOf(Triple(normalBtn, "태초", GameMode.NORMAL), Triple(invBtn, "침공", GameMode.INVASION))) {
+            b.text = t; b.setTextColor(Color.WHITE); b.isAllCaps = false; b.textSize = 13f
+            b.setOnClickListener { mode = m; syncMode() }
+            modeRow.addView(b, LinearLayout.LayoutParams(0, dp(40), 1f).also { it.setMargins(dp(2), 0, dp(2), dp(4)) })
+        }
+        right.addView(modeRow)
         right.addView(TextView(this).apply {
-            text = "어떤 보스인가요? (${mode.label} 모드)"
+            text = "어떤 보스(로비)인가요?"
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
         })
-        bossSpinner = Spinner(this)
-        val names = BossCatalog.watchList(mode)
-        bossSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
         right.addView(bossSpinner)
+        syncMode()
         row.addView(right, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         col.addView(row)
 
@@ -150,6 +172,10 @@ class CropActivity : AppCompatActivity() {
         return col
     }
 
+    /** 그 모드에서 고를 수 있는 항목 — 보스 + 로비 화면 */
+    private fun targetsFor(m: GameMode): List<String> =
+        BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m)
+
     private fun currentCrop(): Bitmap? {
         val src = source ?: return null
         val r = cropView.cropRectInBitmap()
@@ -177,7 +203,7 @@ class CropActivity : AppCompatActivity() {
             Toast.makeText(this, "저장하지 못했습니다", Toast.LENGTH_SHORT).show()
             return
         }
-        Bus.log("✂️ [사진 등록] '$name' 저장 (${crop.width}×${crop.height}) — 바로 인식에 쓰입니다")
+        Bus.log("✂️ [사진 등록] '$name' 저장 (${crop.width}×${crop.height}, ${mode.label}) — 바로 인식에 쓰입니다")
         Toast.makeText(this, "$name 저장했습니다", Toast.LENGTH_SHORT).show()
         finish()
     }

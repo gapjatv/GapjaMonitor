@@ -45,6 +45,14 @@ interface ImageOps<T> {
 
     /** 윤곽선(외곽선) 기준 일치도 — 반투명 가림막에 강하다 */
     fun edgeScore(screen: T, tpl: T): Double
+
+    /**
+     * 중간에 만든 이미지를 버린다.
+     * OpenCV Mat 은 네이티브 메모리를 쓰므로 직접 풀어줘야 한다.
+     * (안 풀면 검사할 때마다 메모리가 쌓여 오래 켜두면 앱이 죽는다)
+     * 배열 구현(테스트)에서는 아무것도 하지 않는다.
+     */
+    fun release(img: T) {}
 }
 
 /** 멀티스케일 매칭 결과 */
@@ -111,7 +119,9 @@ class Matcher<T>(private val ops: ImageOps<T>) {
             if (nw < 12 || nh < 12 || nw > sw || nh > sh) continue
 
             val scaled = if (eff == 1.0) template else ops.resize(template, nw, nh)
-            val peak = ops.match(screen, scaled) ?: continue
+            val peak = ops.match(screen, scaled)
+            if (scaled !== template) ops.release(scaled)
+            if (peak == null) continue
 
             if (peak.score > best.score) {
                 best = MatchOutcome(peak.score, peak.psr, peak.x, peak.y, nw, nh, sc)
@@ -185,10 +195,13 @@ class Matcher<T>(private val ops: ImageOps<T>) {
                 // 너무 작은 조각은 아무데나 맞아버리므로 쓰지 않는다
                 if (pw < 8 || ph < 8 || pw > sw || ph > sh) continue
                 val piece = ops.crop(tpl, x0, y0, pw, ph)
-                val peak = ops.match(screen, piece) ?: continue
+                val peak = ops.match(screen, piece)
+                ops.release(piece)
+                if (peak == null) continue
                 cand.add(Triple(peak.score, peak.x - x0, peak.y - y0))
             }
         }
+        if (tpl !== template) ops.release(tpl)
         if (cand.isEmpty()) return TileOutcome.NONE
 
         // 원점 투표 — 가장 많은 조각이 동의하는 자리를 찾는다
@@ -228,6 +241,9 @@ class Matcher<T>(private val ops: ImageOps<T>) {
         val roi = ops.crop(screen, x0, y0, rw, rh)
         val tpl = if (ops.size(template).let { it[0] == w && it[1] == h }) template
         else ops.resize(template, w, h)
-        return ops.edgeScore(roi, tpl)
+        val score = ops.edgeScore(roi, tpl)
+        ops.release(roi)
+        if (tpl !== template) ops.release(tpl)
+        return score
     }
 }

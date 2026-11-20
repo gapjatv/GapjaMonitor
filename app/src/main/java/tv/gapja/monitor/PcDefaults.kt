@@ -65,7 +65,76 @@ object PcDefaults {
 
     fun condTexts(user: Map<String, String>): Map<String, String> = TEXT_80R_COND + user
 
-    /** 모드별 고정 배속 표시 (폰판은 배속 토글 없이 고정) */
-    fun speedLabel(mode: GameMode): String =
-        if (mode == GameMode.NORMAL) "2배 고정" else "1배 고정"
+    /** 배속 표시 — PC판과 같은 규칙 */
+    fun speedLabel(mode: GameMode, locked: Boolean = true): String = when {
+        !locked -> "배속 자동 인식"
+        mode == GameMode.NORMAL -> "2배속 고정"
+        else -> "초반 2배속 → 1배속"
+    }
+
+    // ── 로비 화면 (인식되면 보스 사진 초기화) ───────────────────
+
+    /** 태초 로비 — 인식되면 태초 모드로 바꾸고 초기화 (PC '로비화면.png') */
+    const val LOBBY_NORMAL = "태초로비"
+
+    /** 침공 로비 — 인식되면 침공 모드로 바꾸고 초기화 (PC '침공로비화면.png') */
+    const val LOBBY_INVASION = "침공로비"
+
+    /** 공통 로비 — 로비까지 안 가고 '다시하기'를 누르는 화면. 모드는 그대로 두고 초기화 (PC '공용화면.png') */
+    const val LOBBY_COMMON = "공통로비"
+
+    val LOBBIES: List<String> = listOf(LOBBY_NORMAL, LOBBY_INVASION, LOBBY_COMMON)
+
+    fun isLobby(name: String): Boolean = name in LOBBIES
+
+    /** 자르기 화면에서 그 모드에 보여줄 로비 항목 */
+    fun lobbiesFor(mode: GameMode): List<String> =
+        if (mode == GameMode.NORMAL) listOf(LOBBY_NORMAL, LOBBY_COMMON) else listOf(LOBBY_INVASION, LOBBY_COMMON)
+
+    /** PC MATCH_THRESHOLD — 로비 화면 인식 기준 */
+    const val LOBBY_THRESHOLD = 0.60
+
+    // ── 배속 인식 (배속 고정을 끈 경우만) ───────────────────────
+
+    /** PC SPEED_MATCH_THRESHOLD / SPEED_MATCH_MARGIN */
+    const val SPEED_THRESHOLD = 0.60
+    const val SPEED_MARGIN = 0.03
+
+    // ── 보스 위험 경보 (PC app_config.json 값) ─────────────────
+
+    /** 일반 보스 경보 목표 시간(초) */
+    const val WARN_BASE_NORMAL = 117
+    const val WARN_BASE_INVASION = 113
+
+    /** PC special_bosses — 개별 시간을 따로 쓰는 보스 */
+    val WARN_SPECIAL_BOSSES: List<String> =
+        listOf("사신", "매지션", "반파이어", "히든보스", "악마 모노폴리", "쌍둥이 슬라임", "거대 전기로봇")
+
+    /** 태초 모드에서 개별 시간을 쓰는 보스 */
+    val WARN_SPECIAL_NORMAL_LIST: List<String> = listOf("사신", "매지션", "반파이어", "히든보스")
+
+    /** 침공 모드에서 개별 시간을 쓰는 보스 */
+    val WARN_SPECIAL_INVASION_LIST: List<String> =
+        listOf("사신", "매지션", "반파이어", "히든보스", "악마 모노폴리", "쌍둥이 슬라임", "거대 전기로봇")
+
+    val WARN_SPECIAL_NORMAL: Map<String, Int> = mapOf(
+        "사신" to 115, "매지션" to 115, "반파이어" to 115, "히든보스" to 3
+    )
+
+    val WARN_SPECIAL_INVASION: Map<String, Int> = mapOf(
+        "사신" to 112, "매지션" to 112, "반파이어" to 114, "히든보스" to 4,
+        "악마 모노폴리" to 60, "쌍둥이 슬라임" to 60, "거대 전기로봇" to 60
+    )
+
+    /** PC invasion_early_2x_ratio — 침공은 경보 시간의 앞 30% 만 2배속으로 계산 */
+    const val INVASION_EARLY_2X_PCT = 30
+
+    /**
+     * PC warning_texts — 경보음(alarms/{보스}.mp3)이 없을 때 읽어주는 말.
+     * voices/{말}.mp3 가 있으면 그 목소리로 나온다. (예: 미티어대비.mp3)
+     */
+    val WARN_TEXT: Map<String, String> = mapOf(
+        "콜디스트" to "준비", "닥터" to "준비", "샤먼" to "변신주의",
+        "매지션" to "미티어대비", "사신" to "삭제대비", "반파이어" to "반파주의"
+    )
 }

@@ -20,12 +20,18 @@ import java.util.Locale
  * 403 같은 문제도 없다. PC판에서 403으로 고생했던 부분이 폰에서는 사라진다.
  *
  * 한 번에 하나만 재생한다 (겹쳐 나오면 알아들을 수 없다).
+ * 재생 중에 새 안내가 오면 끊지 않고 순서대로 이어서 재생한다. (PC판 음성 큐와 같다)
+ * 위험 경보는 타이밍이 중요해서 줄 맨 앞에 끼워 넣는다.
  */
 class Speaker(private val ctx: Context) {
 
     private var tts: TextToSpeech? = null
     private var ready = false
     private var player: MediaPlayer? = null
+
+    /** 재생을 기다리는 MP3 (앞쪽이 먼저) */
+    private val queue = ArrayDeque<File>()
+    private val lock = Any()
 
     private val voiceDir: File by lazy {
         File(ctx.filesDir, "voices").apply { mkdirs() }
@@ -80,15 +86,58 @@ class Speaker(private val ctx: Context) {
         if (!ready) return
         try {
             tts?.setSpeechRate(Prefs.speechRate(ctx))
-            tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "gapja")
+            tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "gapja")
         } catch (e: Exception) {
             Log.w(TAG, "읽기 실패", e)
         }
     }
 
-    private fun playFile(f: File) {
+    /**
+     * 위험 경보를 울린다 — PC schedule_warning 과 같은 순서.
+     *   ① alarms/{보스}.mp3 (PC sounds 폴더의 경보음)
+     *   ② 없으면 경보 멘트(예: "미티어대비") — voices/{멘트}.mp3 또는 내장 TTS
+     * @return 무엇을 재생했는지 (로그용), 아무것도 없으면 null
+     */
+    fun playWarning(boss: String): String? {
+        if (!Prefs.voiceEnabled(ctx)) return null
+        val alarm = AssetInstaller.alarmFile(ctx, boss)
+        if (alarm.exists() && alarm.length() > MIN_AUDIO_BYTES) {
+            playFile(alarm, front = true)
+            return "경보음"
+        }
+        val text = PcDefaults.WARN_TEXT[boss]?.takeIf { it.isNotBlank() } ?: return null
+        val mp3 = File(voiceDir, "${sanitize(text)}.mp3")
+        if (mp3.exists() && mp3.length() > MIN_AUDIO_BYTES) {
+            playFile(mp3, front = true)
+        } else if (ready) {
+            try {
+                tts?.setSpeechRate(Prefs.speechRate(ctx))
+                tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "gapja_warn")
+            } catch (_: Exception) {}
+        }
+        return "멘트 \"$text\""
+    }
+
+    /** 기다리던 안내를 모두 버린다 (판이 끝났을 때 이전 판 안내가 뒤늦게 나오지 않게) */
+    fun clearQueue() {
+        synchronized(lock) { queue.clear() }
+        try { tts?.stop() } catch (_: Exception) {}
+    }
+
+    private fun playFile(f: File, front: Boolean = false) {
+        synchronized(lock) {
+            if (player != null) {
+                // 재생 중이면 끊지 않고 줄을 세운다 (너무 밀리면 오래된 것부터 버린다)
+                if (front) queue.addFirst(f) else queue.addLast(f)
+                while (queue.size > 6) queue.removeLast()
+                return
+            }
+            startNow(f)
+        }
+    }
+
+    private fun startNow(f: File) {
         try {
-            stopPlayer()
             player = MediaPlayer().apply {
                 setAudioAttributes(
                     AudioAttributes.Builder()
@@ -97,20 +146,36 @@ class Speaker(private val ctx: Context) {
                         .build()
                 )
                 setDataSource(f.absolutePath)
-                setOnCompletionListener { stopPlayer() }
-                setOnErrorListener { _, _, _ -> stopPlayer(); true }
+                setOnCompletionListener { playNext() }
+                setOnErrorListener { _, _, _ -> playNext(); true }
                 prepare()
                 start()
             }
         } catch (e: Exception) {
             Log.w(TAG, "MP3 재생 실패: ${f.name}", e)
-            stopPlayer()
+            try { player?.release() } catch (_: Exception) {}
+            player = null
+        }
+    }
+
+    /** 하나가 끝나면 다음 것을 재생한다 */
+    private fun playNext() {
+        synchronized(lock) {
+            try { player?.release() } catch (_: Exception) {}
+            player = null
+            while (queue.isNotEmpty()) {
+                startNow(queue.removeFirst())
+                if (player != null) break
+            }
         }
     }
 
     private fun stopPlayer() {
-        try { player?.release() } catch (_: Exception) {}
-        player = null
+        synchronized(lock) {
+            queue.clear()
+            try { player?.release() } catch (_: Exception) {}
+            player = null
+        }
     }
 
     /** 파일 이름에 쓸 수 없는 글자를 걸러낸다 */

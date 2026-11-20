@@ -10,10 +10,15 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.text.Editable
+import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.CheckBox
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -27,7 +32,7 @@ import tv.gapja.monitor.core.BossCatalog
 import tv.gapja.monitor.core.GameMode
 
 /**
- * 메인 화면 — 시작 버튼 하나, 모드 2개, 꼭 필요한 설정만.
+ * 메인 화면 — 시작 버튼 하나, 모드 버튼 하나(PC판처럼), 꼭 필요한 설정만.
  *
  * XML 레이아웃 없이 코드로 화면을 만든다.
  * 자주 안 쓰는 설정(인식 세부값, 기록 주고받기 등)은 맨 아래 '고급 설정'에 접어 둔다.
@@ -45,6 +50,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var startBtn: Button
 
     private var mode = GameMode.INVASION
+    private var modeBtn: Button? = null
 
     private val changeListener: () -> Unit = { refresh() }
 
@@ -139,7 +145,9 @@ class MainActivity : AppCompatActivity() {
             toast("OpenCV를 불러오지 못했습니다. 앱을 다시 설치해 주세요.")
         }
 
-        setContentView(buildUi())
+        val root = buildUi()
+        setContentView(root)
+        UiInsets.apply(root)
 
         if (installed > 0) {
             Bus.log("📦 기본 자료 ${installed}개를 준비했습니다. (보스 사진 · 인식용 사진 · 음성)")
@@ -150,6 +158,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         Bus.onLog = { appendLog(it) }
+        Bus.onExit = { finishAndRemoveTask() }
         Bus.addChangeListener(changeListener)
         Bus.recordedGames = seqRepo.load().games.size
         refresh()
@@ -163,7 +172,11 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(16), dp(16), dp(24))
         }
-        outer.addView(col)
+        // 태블릿처럼 넓은 화면에서는 내용 폭을 제한하고 가운데에 둔다
+        val frame = FrameLayout(this)
+        frame.addView(col, FrameLayout.LayoutParams(
+            UiInsets.contentWidth(this), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
+        outer.addView(frame)
 
         // ── 제목 ──
         col.addView(TextView(this).apply {
@@ -206,24 +219,32 @@ class MainActivity : AppCompatActivity() {
             }
         ))
 
-        // ── 모드 ──
-        col.addView(h("모드"))
-        val normalBtn = btn("태초\n2배 고정", "#34495E") {}
-        val invBtn = btn("침공\n1배 고정", "#8E44AD") {}
-        fun syncMode() {
-            normalBtn.setBackgroundColor(Color.parseColor(if (mode == GameMode.NORMAL) "#2C8C6E" else "#2A3644"))
-            invBtn.setBackgroundColor(Color.parseColor(if (mode == GameMode.INVASION) "#8E44AD" else "#2A3644"))
+        // ── 모드 · 배속 (PC판처럼 버튼 하나씩) ──
+        col.addView(h("모드 · 배속"))
+        modeBtn = btn("", "#8E44AD") {
+            mode = if (mode == GameMode.INVASION) GameMode.NORMAL else GameMode.INVASION
+            Prefs.setMode(this, mode.key)
+            CaptureService.send(this, CaptureService.ACTION_MODE, mode)
+            refresh()
         }
-        normalBtn.setOnClickListener {
-            mode = GameMode.NORMAL; Prefs.setMode(this, mode.key)
-            CaptureService.send(this, CaptureService.ACTION_MODE, mode); syncMode(); refresh()
+        col.addView(modeBtn)
+        col.addView(body("누르면 태초 ⇄ 침공. 감시 중 로비 화면이 보이면 자동으로 바뀝니다."))
+        val speedBtn = btn("", "#16A085") {}
+        fun syncSpeed() {
+            val locked = Prefs.speedLock(this)
+            speedBtn.text = if (locked) "🔒 배속 고정 (2x 고정 중)" else "🔓 배속 자동 인식 중"
+            speedBtn.setBackgroundColor(Color.parseColor(if (locked) "#16A085" else "#9B59B6"))
         }
-        invBtn.setOnClickListener {
-            mode = GameMode.INVASION; Prefs.setMode(this, mode.key)
-            CaptureService.send(this, CaptureService.ACTION_MODE, mode); syncMode(); refresh()
+        speedBtn.setOnClickListener {
+            Prefs.setSpeedLock(this, !Prefs.speedLock(this)); syncSpeed()
+            Bus.log(if (Prefs.speedLock(this))
+                "🔒 [배속 고정] 태초는 2배속, 침공은 앞 ${PcDefaults.INVASION_EARLY_2X_PCT}% 만 2배속으로 계산합니다."
+                else "🔓 [배속 고정 해제] 화면의 1배속/2배속 표시를 읽어서 계산합니다.")
         }
-        syncMode()
-        col.addView(row(normalBtn, invBtn))
+        syncSpeed()
+        col.addView(speedBtn)
+        col.addView(body("기본은 2배속 고정 (태초는 항상 2배속, 침공은 앞 ${PcDefaults.INVASION_EARLY_2X_PCT}% 구간만 2배속). " +
+                "누르면 화면의 배속 표시를 읽는 자동 인식으로 바뀝니다."))
 
         // ── 보스 사진 표시 ──
         col.addView(h("보스 사진 표시"))
@@ -273,6 +294,9 @@ class MainActivity : AppCompatActivity() {
             btn("🔊 MP3 추가", "#2980B9") { pickVoices.launch(arrayOf("audio/mpeg")) }
         ))
 
+        // ── 보스 위험 경보 ──
+        buildWarnings(col)
+
         // ── 기본 자료 ──
         col.addView(h("기본 자료 (PC에서 가져옴)"))
         resView = TextView(this).apply {
@@ -282,7 +306,10 @@ class MainActivity : AppCompatActivity() {
             setLineSpacing(0f, 1.3f)
         }
         col.addView(resView)
-        col.addView(btn("✂️ 인식 안 될 때: 폰 스크린샷에서 보스 잘라 넣기", "#34495E") {
+        col.addView(btn("🖼 저장된 보스 사진 · 로비 화면 보기", "#2980B9") {
+            startActivity(Intent(this, GalleryActivity::class.java))
+        })
+        col.addView(btn("✂️ 인식 안 될 때: 폰 스크린샷에서 보스·로비 잘라 넣기", "#34495E") {
             pickScreenshot.launch(arrayOf("image/*"))
         })
 
@@ -319,6 +346,85 @@ class MainActivity : AppCompatActivity() {
 
         return outer
     }
+
+    /**
+     * 보스 위험 경보 목표 시간 — PC판 설정 화면과 같은 구성.
+     * 보스가 인식되고 이 시간(게임 안 시간)이 지나면 경보음(또는 경보 멘트)이 울린다.
+     */
+    private fun buildWarnings(col: LinearLayout) {
+        col.addView(h("보스 위험 경보 목표 시간 (기준 초)"))
+        col.addView(check("위험 경보 사용", Prefs.warningEnabled(this)) { Prefs.setWarningEnabled(this, it) })
+        col.addView(body("일반은 2배속, 침공은 1배속 플레이가 많아 시간을 다르게 설정할 수 있어요."))
+
+        val fields = ArrayList<Pair<EditText, () -> Int>>()
+        fun numField(initial: Int, onSet: (Int) -> Unit): EditText = EditText(this).apply {
+            setText(initial.toString())
+            inputType = InputType.TYPE_CLASS_NUMBER
+            setTextColor(Color.BLACK); textSize = 14f
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.WHITE)
+            setPadding(dp(4), dp(4), dp(4), dp(4))
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(e: Editable?) {
+                    e?.toString()?.trim()?.toIntOrNull()?.let(onSet)
+                }
+            })
+        }
+        fun pair(label: String, color: Int, et: EditText) = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(3), 0, dp(3))
+            addView(TextView(this@MainActivity).apply {
+                text = label; setTextColor(color); textSize = 13f
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(et, LinearLayout.LayoutParams(dp(72), dp(36)))
+        }
+
+        val green = Color.parseColor("#FF2ECC71"); val red = Color.parseColor("#FFE74C3C")
+        val white = Color.WHITE; val special = Color.parseColor("#FFE74C3C")
+
+        val baseN = numField(Prefs.warnBase(this, GameMode.NORMAL)) { Prefs.setWarnBase(this, GameMode.NORMAL, it) }
+        val baseI = numField(Prefs.warnBase(this, GameMode.INVASION)) { Prefs.setWarnBase(this, GameMode.INVASION, it) }
+        fields.add(baseN to { Prefs.warnBase(this, GameMode.NORMAL) })
+        fields.add(baseI to { Prefs.warnBase(this, GameMode.INVASION) })
+        col.addView(pair("🟢 일반(태초) 모드", green, baseN))
+        col.addView(pair("🔥 침공 모드", red, baseI))
+
+        col.addView(TextView(this).apply {
+            text = "특수 보스 개별 경보 타이머 (초)"
+            setTextColor(Color.parseColor("#FF3498DB")); textSize = 13f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, dp(10), 0, dp(2))
+        })
+        for ((m, list, title, tc) in listOf(
+            Quad(GameMode.NORMAL, PcDefaults.WARN_SPECIAL_NORMAL_LIST, "🟢 일반(태초) 모드", green),
+            Quad(GameMode.INVASION, PcDefaults.WARN_SPECIAL_INVASION_LIST, "🔥 침공 모드", red)
+        )) {
+            col.addView(TextView(this).apply {
+                text = title; setTextColor(tc); textSize = 13f
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, dp(6), 0, 0)
+            })
+            for (b in list) {
+                val et = numField(Prefs.warnSpecial(this, m, b) ?: Prefs.warnBase(this, m)) {
+                    Prefs.setWarnSpecial(this, m, b, it)
+                }
+                fields.add(et to { Prefs.warnSpecial(this, m, b) ?: Prefs.warnBase(this, m) })
+                col.addView(pair(b, if (BossCatalog.isSpecial(b)) special else white, et))
+            }
+        }
+        col.addView(btn("↺ PC 기본값으로 되돌리기", "#7F8C8D") {
+            Prefs.resetWarnings(this)
+            for ((et, get) in fields) et.setText(get().toString())
+            toast("위험 경보 시간을 PC 기본값으로 되돌렸습니다")
+        })
+        col.addView(body("경보음은 PC sounds 폴더의 보스별 MP3(${AssetInstaller.alarmCount(this)}개)를 씁니다. " +
+                "경보음이 없는 보스는 경보 멘트(준비·변신주의·미티어대비 등)를 읽어 줍니다."))
+    }
+
+    private data class Quad(val a: GameMode, val b: List<String>, val c: String, val d: Int)
 
     /** 고급 설정 — 기존 기능을 그대로 두되 평소엔 접어 둔다 */
     private fun buildAdvanced(col: LinearLayout) {
@@ -463,12 +569,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun refresh() {
         if (!::statusView.isInitialized) return
+        // 로비 인식으로 서비스가 모드를 바꿨을 수 있으니 저장된 값을 다시 읽는다
+        mode = GameMode.from(Prefs.mode(this))
+        modeBtn?.let { b ->
+            b.text = if (mode == GameMode.INVASION) "🔥 현재 모드: 침공  (눌러서 태초로)" else "🟢 현재 모드: 일반(태초)  (눌러서 침공으로)"
+            b.setBackgroundColor(Color.parseColor(if (mode == GameMode.INVASION) "#8E44AD" else "#2C8C6E"))
+        }
         val all = BossCatalog.watchList(mode)
         val avail = templates.availableBosses(all, mode).size
         val voices = java.io.File(filesDir, "voices").listFiles { f -> f.name.lowercase().endsWith(".mp3") }?.size ?: 0
+        val lobbies = PcDefaults.LOBBIES.count { java.io.File(java.io.File(filesDir, "templates"), "$it.png").exists() }
         resView.text = "게임 위 보스 사진  ${AssetInstaller.displayCount(this)}종\n" +
                 "인식용 사진  ${templates.count()}장 (이 모드에서 ${avail}/${all.size}종 인식 가능)\n" +
-                "음성 MP3  ${voices}개 (없는 보스는 폰 내장 TTS)"
+                "로비 화면  ${lobbies}/3 (태초로비 · 침공로비 · 공통로비)\n" +
+                "음성 MP3  ${voices}개 · 위험 경보음 ${AssetInstaller.alarmCount(this)}개"
 
         startBtn.text = if (Bus.running) "멈춤" else "시작"
         startBtn.setBackgroundColor(Color.parseColor(if (Bus.running) "#C0392B" else "#16A085"))
@@ -476,7 +590,7 @@ class MainActivity : AppCompatActivity() {
         val order = Bus.activated
         val sb = StringBuilder()
         sb.append(if (Bus.running) "● 감시 중" else "○ 멈춤").append("   ")
-        sb.append(mode.label).append(" 모드 · ").append(PcDefaults.speedLabel(mode)).append('\n')
+        sb.append(mode.label).append(" 모드 · ").append(PcDefaults.speedLabel(mode, Prefs.speedLock(this))).append('\n')
         sb.append("감시 영역: 폰 전체 화면 (자동)\n")
         if (order.isEmpty()) {
             sb.append("아직 인식된 보스가 없습니다")
@@ -516,6 +630,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         Bus.onLog = { appendLog(it) }
+        Bus.onExit = { finishAndRemoveTask() }
         Bus.addChangeListener(changeListener)
         Bus.recordedGames = seqRepo.load().games.size
         refresh()
@@ -523,6 +638,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         Bus.onLog = null
+        Bus.onExit = null
         Bus.removeChangeListener(changeListener)
         try { speaker.release() } catch (_: Exception) {}
         super.onDestroy()

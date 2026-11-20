@@ -21,6 +21,11 @@ object CvOps : ImageOps<Mat> {
 
     override fun size(img: Mat): IntArray = intArrayOf(img.cols(), img.rows())
 
+    /** 중간 이미지의 네이티브 메모리를 바로 돌려준다 */
+    override fun release(img: Mat) {
+        try { img.release() } catch (_: Exception) {}
+    }
+
     override fun resize(img: Mat, w: Int, h: Int): Mat {
         val out = Mat()
         // 축소는 INTER_AREA 가 가장 깨끗하다 (모아레를 줄여 매칭 점수를 지켜준다)

@@ -1,6 +1,7 @@
 package tv.gapja.monitor
 
 import android.content.Context
+import tv.gapja.monitor.core.GameMode
 import tv.gapja.monitor.core.BossCatalog
 import tv.gapja.monitor.core.Predictor
 
@@ -200,6 +201,64 @@ object Prefs {
 
     fun setChipPos(ctx: Context, x: Int, y: Int) =
         sp(ctx).edit().putInt("chip_x", x).putInt("chip_y", y).apply()
+
+    // ── 보스설정 버튼 ──
+
+    /** [보스설정] 버튼 크기(%) — 100 이 기본 */
+    fun buttonScale(ctx: Context): Int = sp(ctx).getInt("btn_scale", 100).coerceIn(60, 200)
+
+    fun setButtonScale(ctx: Context, pct: Int) =
+        sp(ctx).edit().putInt("btn_scale", pct.coerceIn(60, 200)).apply()
+
+    // ── 배속 · 위험 경보 ──
+
+    /** 배속 고정 — 켜면 태초는 항상 2배속, 침공은 앞 30% 만 2배속으로 계산 (PC 기본값과 같다) */
+    fun speedLock(ctx: Context): Boolean = sp(ctx).getBoolean("speed_lock", true)
+
+    fun setSpeedLock(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean("speed_lock", on).apply()
+
+    /** 위험 경보 사용 */
+    fun warningEnabled(ctx: Context): Boolean = sp(ctx).getBoolean("warn_on", true)
+
+    fun setWarningEnabled(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean("warn_on", on).apply()
+
+    /** 일반 보스 경보 목표 시간(초) */
+    fun warnBase(ctx: Context, mode: GameMode): Int =
+        if (mode == GameMode.NORMAL) sp(ctx).getInt("warn_base_n", PcDefaults.WARN_BASE_NORMAL)
+        else sp(ctx).getInt("warn_base_i", PcDefaults.WARN_BASE_INVASION)
+
+    fun setWarnBase(ctx: Context, mode: GameMode, sec: Int) =
+        sp(ctx).edit().putInt(if (mode == GameMode.NORMAL) "warn_base_n" else "warn_base_i",
+            sec.coerceIn(0, 3600)).apply()
+
+    /** 보스별 개별 경보 시간(초) — 설정 안 했으면 PC 기본값 */
+    fun warnSpecial(ctx: Context, mode: GameMode, boss: String): Int? {
+        val key = (if (mode == GameMode.NORMAL) "warn_sp_n_" else "warn_sp_i_") + boss
+        val def = (if (mode == GameMode.NORMAL) PcDefaults.WARN_SPECIAL_NORMAL else PcDefaults.WARN_SPECIAL_INVASION)[boss]
+        val v = sp(ctx).getInt(key, Int.MIN_VALUE)
+        return if (v == Int.MIN_VALUE) def else v
+    }
+
+    fun setWarnSpecial(ctx: Context, mode: GameMode, boss: String, sec: Int) =
+        sp(ctx).edit().putInt((if (mode == GameMode.NORMAL) "warn_sp_n_" else "warn_sp_i_") + boss,
+            sec.coerceIn(0, 3600)).apply()
+
+    /** 그 보스의 경보 목표 시간(초) — PC schedule_warning 과 같은 규칙 */
+    fun warnDelay(ctx: Context, mode: GameMode, boss: String): Int {
+        val base = warnBase(ctx, mode)
+        if (boss !in PcDefaults.WARN_SPECIAL_BOSSES) return base
+        return warnSpecial(ctx, mode, boss) ?: base
+    }
+
+    /** 경보 시간을 PC 기본값으로 되돌린다 */
+    fun resetWarnings(ctx: Context) {
+        val e = sp(ctx).edit()
+        e.remove("warn_base_n"); e.remove("warn_base_i")
+        for (b in PcDefaults.WARN_SPECIAL_BOSSES) { e.remove("warn_sp_n_$b"); e.remove("warn_sp_i_$b") }
+        e.apply()
+    }
 
     /** 기본 자료(보스 사진·인식 사진·음성)를 앱에 풀어 둔 버전 */
     fun assetsVersion(ctx: Context): Int = sp(ctx).getInt("assets_ver", 0)

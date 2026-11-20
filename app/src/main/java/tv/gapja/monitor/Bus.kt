@@ -40,6 +40,11 @@ object Bus {
 
     var onLog: ((String) -> Unit)? = null
 
+    /** [보스설정 → 끄기] 를 누르면 메인 화면을 닫는다 */
+    var onExit: (() -> Unit)? = null
+
+    fun exitApp() { main.post { try { onExit?.invoke() } catch (_: Exception) {} } }
+
     /**
      * 상태가 바뀌면 부를 화면들.
      *

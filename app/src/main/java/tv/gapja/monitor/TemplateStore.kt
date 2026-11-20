@@ -91,7 +91,8 @@ class TemplateStore(private val ctx: Context) {
      * @return 저장한 파일 이름 (보조 자리가 꽉 찼으면 _4 를 덮어쓴다)
      */
     fun saveCrop(bmp: Bitmap, boss: String, mode: GameMode, asExtra: Boolean): String? {
-        val base = if (mode == GameMode.INVASION) "${INVASION_PREFIX}$boss" else boss
+        // 로비 화면(태초로비·침공로비·공통로비)은 이름에 모드가 들어 있어 '침공_' 을 붙이지 않는다
+        val base = if (mode == GameMode.INVASION && !PcDefaults.isLobby(boss)) "${INVASION_PREFIX}$boss" else boss
         val name = if (!asExtra) "$base.png" else {
             BossCatalog.EXTRA_SHOT_SUFFIXES.map { "$base$it.png" }
                 .firstOrNull { !File(dir, it).exists() }

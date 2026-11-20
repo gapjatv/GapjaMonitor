@@ -174,29 +174,81 @@ class OverlayService : Service() {
         }
     }
 
-    // ── 작은 버튼 (캡처 / 조절) ──────────────────────────────────
+    // ── [보스설정] 버튼 (누르면 캡처 · 조절 · 리셋 · 끄기) ─────────────
+
+    private var chipMain: TextView? = null
+    private var chipMenu: LinearLayout? = null
+    private val chipMenuBtns = ArrayList<TextView>()
+    private var chipScaleApplied = -1
+
+    /** 1분 동안 안 쓰면 버튼을 흐리게 해서 게임 중에 덜 거슬리게 한다 */
+    private val fadeRunnable = Runnable { chip?.animate()?.alpha(IDLE_ALPHA)?.setDuration(600)?.start() }
+
+    private fun wakeChip() {
+        chip?.animate()?.cancel()
+        chip?.alpha = 1f
+        main.removeCallbacks(fadeRunnable)
+        main.postDelayed(fadeRunnable, IDLE_FADE_MS)
+    }
 
     @SuppressLint("ClickableViewAccessibility")
     private fun buildChip() {
         val box = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            setPadding(dp(4), dp(3), dp(4), dp(3))
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        val mainBtn = TextView(this).apply {
+            text = "보스설정"
+            setTextColor(Color.WHITE)
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
             background = GradientDrawable().apply {
-                cornerRadius = dp(14).toFloat()
-                setColor(Color.parseColor("#99000000"))
+                cornerRadius = dp(16).toFloat()
+                setColor(Color.parseColor("#B3000000"))
+                setStroke(dp(1), Color.parseColor("#801ABC9C"))
             }
         }
-        fun chipBtn(text: String, action: () -> Unit) = TextView(this).apply {
+        chipMain = mainBtn
+        box.addView(mainBtn)
+
+        val menu = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            visibility = View.GONE
+            setPadding(0, dp(4), 0, 0)
+        }
+        fun menuBtn(text: String, color: String, action: () -> Unit) = TextView(this).apply {
             this.text = text
             setTextColor(Color.WHITE)
-            textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
-            setPadding(dp(9), dp(4), dp(9), dp(4))
-            setOnClickListener { action() }
+            gravity = Gravity.CENTER
+            background = GradientDrawable().apply {
+                cornerRadius = dp(12).toFloat()
+                setColor(Color.parseColor(color))
+            }
+            setOnClickListener {
+                wakeChip()
+                menu.visibility = View.GONE
+                action()
+            }
         }
-        box.addView(chipBtn("캡처") { takeSnapshot() })
-        box.addView(chipBtn("조절") { setEditing(!editing) })
+        val items = listOf(
+            menuBtn("캡처", "#E62980B9") { takeSnapshot() },
+            menuBtn("조절", "#E616A085") { setEditing(!editing) },
+            menuBtn("리셋", "#E6D35400") { resetBosses() },
+            menuBtn("끄기", "#E6C0392B") { exitApp() }
+        )
+        chipMenuBtns.clear()
+        for (b in items) {
+            chipMenuBtns.add(b)
+            menu.addView(b, LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT
+            ).also { it.topMargin = dp(3) })
+        }
+        chipMenu = menu
+        box.addView(menu, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         chip = box
+        applyChipScale()
 
         val (sw, _) = screenSize()
         chipLp = WindowManager.LayoutParams(
@@ -208,31 +260,78 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
-            x = Prefs.chipX(this@OverlayService, sw - dp(130))
+            x = Prefs.chipX(this@OverlayService, sw - dp(110))
             y = Prefs.chipY(this@OverlayService, dp(64))
         }
 
-        // 버튼 묶음도 끌어서 옮길 수 있다 (손가락이 조금이라도 움직이면 이동으로 본다)
+        // [보스설정] 버튼: 짧게 누르면 메뉴 열기/닫기, 끌면 위치 이동
         var sx = 0f; var sy = 0f; var ox = 0; var oy = 0; var moved = false
-        box.setOnTouchListener { _, ev ->
+        mainBtn.setOnTouchListener { _, ev ->
             val lp = chipLp ?: return@setOnTouchListener false
             when (ev.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { sx = ev.rawX; sy = ev.rawY; ox = lp.x; oy = lp.y; moved = false; false }
+                MotionEvent.ACTION_DOWN -> {
+                    wakeChip()
+                    sx = ev.rawX; sy = ev.rawY; ox = lp.x; oy = lp.y; moved = false
+                    true
+                }
                 MotionEvent.ACTION_MOVE -> {
-                    if (kotlin.math.abs(ev.rawX - sx) + kotlin.math.abs(ev.rawY - sy) > dp(8)) moved = true
+                    if (kotlin.math.abs(ev.rawX - sx) + kotlin.math.abs(ev.rawY - sy) > dp(10)) moved = true
                     if (moved) {
                         lp.x = ox + (ev.rawX - sx).toInt(); lp.y = oy + (ev.rawY - sy).toInt()
                         try { wm?.updateViewLayout(box, lp) } catch (_: Exception) {}
                     }
-                    moved
+                    true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (moved) { Prefs.setChipPos(this, lp.x, lp.y); true } else false
+                    if (moved) Prefs.setChipPos(this, lp.x, lp.y)
+                    else menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    wakeChip()
+                    true
                 }
+                MotionEvent.ACTION_CANCEL -> true
                 else -> false
             }
         }
         try { wm?.addView(box, chipLp) } catch (_: Exception) {}
+        wakeChip()
+    }
+
+    /** 버튼 크기를 설정값에 맞춘다 (보스설정 → 조절 → 버튼 크기) */
+    private fun applyChipScale() {
+        val pct = Prefs.buttonScale(this)
+        if (pct == chipScaleApplied) return
+        chipScaleApplied = pct
+        val k = pct / 100f
+        chipMain?.apply {
+            textSize = 13f * k
+            setPadding((dp(12) * k).toInt(), (dp(7) * k).toInt(), (dp(12) * k).toInt(), (dp(7) * k).toInt())
+        }
+        for (b in chipMenuBtns) {
+            b.textSize = 13f * k
+            b.setPadding((dp(10) * k).toInt(), (dp(8) * k).toInt(), (dp(10) * k).toInt(), (dp(8) * k).toInt())
+        }
+        chip?.let { v -> chipLp?.let { lp -> try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {} } }
+    }
+
+    /** [리셋] 지금 판의 보스 사진을 모두 지운다 (침공 판은 순서가 기록된다) */
+    private fun resetBosses() {
+        if (!Bus.running) {
+            Toast.makeText(this, "감시 중이 아닙니다", Toast.LENGTH_SHORT).show(); return
+        }
+        CaptureService.send(this, CaptureService.ACTION_RESET)
+        Toast.makeText(this, "보스 사진을 초기화했습니다", Toast.LENGTH_SHORT).show()
+    }
+
+    /** [끄기] 감시와 게임 위 표시를 멈추고 앱을 닫는다 */
+    private fun exitApp() {
+        if (editing) setEditing(false)
+        Toast.makeText(this, "관제탑을 종료합니다", Toast.LENGTH_SHORT).show()
+        if (Bus.running) {
+            CaptureService.send(this, CaptureService.ACTION_EXIT)
+        } else {
+            Bus.exitApp()
+            stopSelf()
+        }
     }
 
     // ── 조절 모드 ────────────────────────────────────────────────
@@ -315,6 +414,24 @@ class OverlayService : Service() {
         box.addView(check("침공 특수보스 사진 표시", { Prefs.showSpecial(this) }) { Prefs.setShowSpecial(this, it) })
         box.addView(check("자동 축소 (보스가 늘면 줄여서 다 보이게)", { Prefs.autoShrink(this) }) { Prefs.setAutoShrink(this, it) })
 
+        // [보스설정] 버튼 크기
+        val btnLabel = label("")
+        fun syncBtn() { btnLabel.text = "보스설정 버튼 크기: ${Prefs.buttonScale(this)}%" }
+        syncBtn()
+        box.addView(btnLabel)
+        box.addView(SeekBar(this).apply {
+            setMax(200 - 60)
+            setProgress(Prefs.buttonScale(this@OverlayService) - 60)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
+                    if (!u) return
+                    Prefs.setButtonScale(this@OverlayService, p + 60); syncBtn(); applyChipScale()
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
+        })
+
         val done = Button(this).apply {
             text = "완료 (저장)"; setTextColor(Color.WHITE); isAllCaps = false
             setBackgroundColor(Color.parseColor("#16A085"))
@@ -383,6 +500,7 @@ class OverlayService : Service() {
     // ── 그리기 ───────────────────────────────────────────────────
 
     private fun render() {
+        applyChipScale()
         val v = strip ?: return
         val lp = stripLp ?: return
         val showAll = Prefs.overlayShowAll(this)
@@ -421,7 +539,22 @@ class OverlayService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    /** 태블릿을 돌리면 화면 밖으로 나간 사진 줄·버튼을 안으로 들여온다 */
+    override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
+        super.onConfigurationChanged(newConfig)
+        val (sw, sh) = screenSize()
+        stripLp?.let { lp ->
+            lp.x = lp.x.coerceIn(0, max(0, sw - dp(60))); lp.y = lp.y.coerceIn(0, max(0, sh - dp(60)))
+        }
+        chipLp?.let { lp ->
+            lp.x = lp.x.coerceIn(0, max(0, sw - dp(80))); lp.y = lp.y.coerceIn(0, max(0, sh - dp(40)))
+            chip?.let { v -> try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {} }
+        }
+        render()
+    }
+
     override fun onDestroy() {
+        main.removeCallbacks(fadeRunnable)
         Bus.removeChangeListener(listener)
         hidePanel()
         try { if (strip != null) wm?.removeView(strip) } catch (_: Exception) {}
@@ -431,6 +564,10 @@ class OverlayService : Service() {
     }
 
     companion object {
+        /** 이 시간 동안 안 쓰면 [보스설정] 버튼을 흐리게 한다 */
+        private const val IDLE_FADE_MS = 60_000L
+        private const val IDLE_ALPHA = 0.3f
+
         /** 조절 화면에서 크기를 맞춰볼 때 쓰는 예시 (판 끝까지 간 경우 11장) */
         private val PREVIEW = listOf(
             "그런트", "윔", "거대 전기로봇", "닥터", "샤먼", "악마 모노폴리",

@@ -76,6 +76,7 @@ class AnalysisActivity : AppCompatActivity() {
         col.addView(btns)
 
         setContentView(col)
+        UiInsets.apply(col)
         render()
     }
 
