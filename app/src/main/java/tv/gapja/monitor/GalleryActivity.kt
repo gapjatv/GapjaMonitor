@@ -80,11 +80,11 @@ class GalleryActivity : AppCompatActivity() {
             })
             return
         }
-        val width = UiInsets.contentWidth(this, 900) - dp(28)
+        val avail = UiInsets.contentWidth(this, 900) - dp(28)
         val cell = dp(if (round) 92 else 120)
-        val cols = max(2, width / cell)
+        val cols = max(2, avail / cell)
         val grid = GridLayout(this).apply { columnCount = cols }
-        val itemW = width / cols
+        val itemW = avail / cols
         for (f in files) {
             val box = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL

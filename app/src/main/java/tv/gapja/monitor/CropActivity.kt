@@ -110,7 +110,7 @@ class CropActivity : AppCompatActivity() {
             setPadding(dp(10), 0, 0, 0)
         }
         // 모드 — 여기서 바로 고른다
-        val modeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val pickRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
         val normalBtn = Button(this); val invBtn = Button(this)
         bossSpinner = Spinner(this)
         fun syncMode() {
@@ -124,9 +124,9 @@ class CropActivity : AppCompatActivity() {
         for ((b, t, m) in listOf(Triple(normalBtn, "태초", GameMode.NORMAL), Triple(invBtn, "침공", GameMode.INVASION))) {
             b.text = t; b.setTextColor(Color.WHITE); b.isAllCaps = false; b.textSize = 13f
             b.setOnClickListener { mode = m; syncMode() }
-            modeRow.addView(b, LinearLayout.LayoutParams(0, dp(40), 1f).also { it.setMargins(dp(2), 0, dp(2), dp(4)) })
+            pickRow.addView(b, LinearLayout.LayoutParams(0, dp(40), 1f).also { it.setMargins(dp(2), 0, dp(2), dp(4)) })
         }
-        right.addView(modeRow)
+        right.addView(pickRow)
         right.addView(TextView(this).apply {
             text = "어떤 보스(로비)인가요?"
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
