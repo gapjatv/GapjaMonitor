@@ -35,7 +35,13 @@ object Bus {
     /** 누적 기록 판 수 */
     @Volatile var recordedGames: Int = 0
 
-    /** 지금 모드 (오버레이 제목에 쓴다) */
+    /** 일시정지 중인지 (보스설정 메뉴 글자를 바꾼다) */
+    @Volatile var paused: Boolean = false
+
+    /** 지금 로비 화면에 있는지 */
+    @Volatile var lobby: Boolean = false
+
+        /** 지금 모드 (오버레이 제목에 쓴다) */
     @Volatile var mode: tv.gapja.monitor.core.GameMode = tv.gapja.monitor.core.GameMode.INVASION
 
     var onLog: ((String) -> Unit)? = null

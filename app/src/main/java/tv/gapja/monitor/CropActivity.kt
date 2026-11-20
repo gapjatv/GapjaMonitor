@@ -54,6 +54,8 @@ class CropActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         mode = GameMode.from(intent.getStringExtra(EXTRA_MODE) ?: Prefs.mode(this))
+        // '새로 등록' 을 쓰는 중이면 보조 사진보다 기본 사진으로 저장하는 게 자연스럽다
+        asExtra = Prefs.usePcTemplates(this)
 
         source = loadSource()
         if (source == null) {
@@ -90,13 +92,29 @@ class CropActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
         })
         col.addView(TextView(this).apply {
-            text = "주황 네모를 끌어서 보스만 감싸세요. 모서리 점을 끌면 크기가 바뀝니다."
+            text = "두 손가락으로 확대한 뒤, 주황 네모로 보스만 감싸세요. 모서리 점을 끌면 크기가 바뀝니다."
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
         })
 
         cropView = CropView(this, source!!) { updatePreview() }
         col.addView(cropView, LinearLayout.LayoutParams(
-            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).also { it.setMargins(0, dp(8), 0, dp(8)) })
+            LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).also { it.setMargins(0, dp(8), 0, dp(4)) })
+
+        // 확대·축소 버튼 — 두 손가락이 불편할 때
+        val zoomRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((t, act) in listOf<Pair<String, () -> Unit>>(
+            "－" to { cropView.zoomBy(1f / 1.5f) },
+            "＋" to { cropView.zoomBy(1.5f) },
+            "네모로 확대" to { cropView.zoomToCrop() },
+            "맞춤" to { cropView.resetZoom() }
+        )) {
+            zoomRow.addView(Button(this).apply {
+                text = t; setTextColor(Color.WHITE); isAllCaps = false; textSize = 13f
+                setBackgroundColor(Color.parseColor("#34495E"))
+                setOnClickListener { act() }
+            }, LinearLayout.LayoutParams(0, dp(40), 1f).also { it.setMargins(dp(2), 0, dp(2), dp(6)) })
+        }
+        col.addView(zoomRow)
 
         // 미리보기 + 보스 선택
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -120,6 +138,7 @@ class CropActivity : AppCompatActivity() {
             val names = targetsFor(mode)
             bossSpinner.adapter = ArrayAdapter(this, android.R.layout.simple_spinner_dropdown_item, names)
             if (prev != null && prev in names) bossSpinner.setSelection(names.indexOf(prev))
+            else defaultTarget(names)?.let { bossSpinner.setSelection(names.indexOf(it)) }
         }
         for ((b, t, m) in listOf(Triple(normalBtn, "태초", GameMode.NORMAL), Triple(invBtn, "침공", GameMode.INVASION))) {
             b.text = t; b.setTextColor(Color.WHITE); b.isAllCaps = false; b.textSize = 13f
@@ -170,6 +189,22 @@ class CropActivity : AppCompatActivity() {
 
         updatePreview()
         return col
+    }
+
+    /**
+     * 처음 고를 항목을 짐작한다.
+     *   • 지금 로비에 있으면 → 그 모드의 로비
+     *   • 방금 인식된 보스가 있으면 → 그 보스 (오인식을 바로잡거나 사진을 늘릴 때)
+     *   • 새로 등록 중이면 → 아직 등록 안 한 첫 항목
+     */
+    private fun defaultTarget(names: List<String>): String? {
+        if (Bus.lobby) return names.firstOrNull { PcDefaults.isLobby(it) }
+        Bus.activated.lastOrNull()?.let { if (it in names) return it }
+        if (!Prefs.usePcTemplates(this)) {
+            val store = TemplateStore(this)
+            return names.firstOrNull { !store.hasUserShot(it, mode) }
+        }
+        return null
     }
 
     /** 그 모드에서 고를 수 있는 항목 — 보스 + 로비 화면 */
@@ -223,6 +258,11 @@ class CropActivity : AppCompatActivity() {
 
 /**
  * 사진 위에 자를 네모를 그리고, 끌어서 옮기거나 모서리로 크기를 바꾸는 뷰.
+ *
+ *   • 두 손가락으로 벌리거나 오므리면 사진을 확대·축소한다 (최대 8배)
+ *   • 확대한 상태에서 네모 밖을 한 손가락으로 끌면 사진이 움직인다
+ *   • 네모 안을 끌면 네모가 움직이고, 모서리 점을 끌면 크기가 바뀐다
+ *   • 두 번 톡톡 누르면 그 자리를 2.5배로 확대 / 다시 두 번 누르면 원래대로
  */
 @SuppressLint("ViewConstructor")
 class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -> Unit) : View(ctx) {
@@ -230,8 +270,16 @@ class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -
     private val density = ctx.resources.displayMetrics.density
     private fun dp(v: Float) = v * density
 
-    /** 화면에 그린 사진 영역 */
+    /** 확대 안 했을 때 사진이 화면에 맞춰 들어가는 영역 */
+    private val fitRect = RectF()
+    /** 지금 화면에 그린 사진 영역 (확대·이동 반영) */
     private val imgRect = RectF()
+    /** 확대 배율 (1 = 화면에 맞춤) */
+    private var zoom = 1f
+    /** 이동량 (px) */
+    private var panX = 0f
+    private var panY = 0f
+
     /** 자를 영역 (사진 좌표, 0~1 비율) */
     private val crop = RectF(0.4f, 0.25f, 0.6f, 0.33f)
 
@@ -243,13 +291,78 @@ class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.parseColor("#F39C12"); textSize = dp(12f); typeface = Typeface.DEFAULT_BOLD
     }
+    private val zoomLabel = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = dp(12f); typeface = Typeface.DEFAULT_BOLD
+    }
     private val bmpPaint = Paint(Paint.FILTER_BITMAP_FLAG)
+
+    private val scaleDetector = android.view.ScaleGestureDetector(ctx,
+        object : android.view.ScaleGestureDetector.SimpleOnScaleGestureListener() {
+            override fun onScale(d: android.view.ScaleGestureDetector): Boolean {
+                zoomAt(zoom * d.scaleFactor, d.focusX, d.focusY)
+                return true
+            }
+        })
+
+    private val tapDetector = android.view.GestureDetector(ctx,
+        object : android.view.GestureDetector.SimpleOnGestureListener() {
+            override fun onDoubleTap(e: MotionEvent): Boolean {
+                if (zoom > 1.2f) resetZoom() else zoomAt(2.5f, e.x, e.y)
+                return true
+            }
+        })
 
     override fun onSizeChanged(w: Int, h: Int, ow: Int, oh: Int) {
         val s = min(w / bmp.width.toFloat(), h / bmp.height.toFloat())
         val dw = bmp.width * s; val dh = bmp.height * s
-        imgRect.set((w - dw) / 2f, (h - dh) / 2f, (w + dw) / 2f, (h + dh) / 2f)
+        fitRect.set((w - dw) / 2f, (h - dh) / 2f, (w + dw) / 2f, (h + dh) / 2f)
+        updateImgRect()
     }
+
+    /** 확대·이동을 반영해 사진 영역을 다시 계산하고, 화면 밖으로 너무 나가지 않게 막는다 */
+    private fun updateImgRect() {
+        val w = fitRect.width() * zoom; val h = fitRect.height() * zoom
+        val cx = width / 2f + panX; val cy = height / 2f + panY
+        imgRect.set(cx - w / 2f, cy - h / 2f, cx + w / 2f, cy + h / 2f)
+        // 사진 가장자리가 화면 안쪽으로 들어오지 않게 (확대했을 때만)
+        if (w > width) {
+            if (imgRect.left > 0) { panX -= imgRect.left; imgRect.offset(-imgRect.left, 0f) }
+            if (imgRect.right < width) { val d = width - imgRect.right; panX += d; imgRect.offset(d, 0f) }
+        } else { panX = 0f; imgRect.offsetTo((width - w) / 2f, imgRect.top) }
+        if (h > height) {
+            if (imgRect.top > 0) { panY -= imgRect.top; imgRect.offset(0f, -imgRect.top) }
+            if (imgRect.bottom < height) { val d = height - imgRect.bottom; panY += d; imgRect.offset(0f, d) }
+        } else { panY = 0f; imgRect.offsetTo(imgRect.left, (height - h) / 2f) }
+    }
+
+    /** (fx, fy) 화면 점을 중심으로 배율을 바꾼다 */
+    fun zoomAt(newZoom: Float, fx: Float = width / 2f, fy: Float = height / 2f) {
+        val z = newZoom.coerceIn(1f, 8f)
+        // 확대 전에 손가락 아래에 있던 사진 위치가 확대 후에도 손가락 아래에 오게 한다
+        val rx = (fx - imgRect.left) / imgRect.width()
+        val ry = (fy - imgRect.top) / imgRect.height()
+        zoom = z
+        val w = fitRect.width() * zoom; val h = fitRect.height() * zoom
+        val left = fx - rx * w; val top = fy - ry * h
+        panX = left + w / 2f - width / 2f
+        panY = top + h / 2f - height / 2f
+        updateImgRect()
+        invalidate()
+    }
+
+    /** 자를 네모가 화면 가운데 오도록 확대한다 */
+    fun zoomToCrop() {
+        val r = cropOnScreen()
+        val target = min(width / (r.width() * 2.2f), height / (r.height() * 2.2f)) * zoom
+        zoomAt(target, r.centerX(), r.centerY())
+        val r2 = cropOnScreen()
+        panX += width / 2f - r2.centerX(); panY += height / 2f - r2.centerY()
+        updateImgRect(); invalidate()
+    }
+
+    fun resetZoom() { zoom = 1f; panX = 0f; panY = 0f; updateImgRect(); invalidate() }
+
+    fun zoomBy(f: Float) = zoomAt(zoom * f)
 
     private fun cropOnScreen(): RectF = RectF(
         imgRect.left + crop.left * imgRect.width(),
@@ -265,43 +378,65 @@ class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -
     )
 
     override fun onDraw(canvas: Canvas) {
+        canvas.save()
+        canvas.clipRect(0f, 0f, width.toFloat(), height.toFloat())
         canvas.drawBitmap(bmp, null, imgRect, bmpPaint)
         val r = cropOnScreen()
-        canvas.drawRect(imgRect.left, imgRect.top, imgRect.right, r.top, dim)
-        canvas.drawRect(imgRect.left, r.bottom, imgRect.right, imgRect.bottom, dim)
-        canvas.drawRect(imgRect.left, r.top, r.left, r.bottom, dim)
-        canvas.drawRect(r.right, r.top, imgRect.right, r.bottom, dim)
+        val vis = RectF(max(0f, imgRect.left), max(0f, imgRect.top),
+            min(width.toFloat(), imgRect.right), min(height.toFloat(), imgRect.bottom))
+        canvas.drawRect(vis.left, vis.top, vis.right, r.top, dim)
+        canvas.drawRect(vis.left, r.bottom, vis.right, vis.bottom, dim)
+        canvas.drawRect(vis.left, r.top, r.left, r.bottom, dim)
+        canvas.drawRect(r.right, r.top, vis.right, r.bottom, dim)
         canvas.drawRect(r, border)
         for ((x, y) in corners(r)) canvas.drawCircle(x, y, dp(9f), handle)
         val px = cropRectInBitmap()
         canvas.drawText("${px.width().toInt()} × ${px.height().toInt()}", r.left, r.bottom + dp(16f), label)
+        canvas.drawText("확대 ${"%.1f".format(zoom)}배  (두 손가락으로 확대·축소)", dp(8f), dp(16f), zoomLabel)
+        canvas.restore()
     }
 
     private fun corners(r: RectF) = listOf(r.left to r.top, r.right to r.top, r.left to r.bottom, r.right to r.bottom)
 
-    private var drag = -1          // -1 없음, 0~3 모서리, 4 이동
+    private var drag = -1          // -1 없음, 0~3 모서리, 4 네모 이동, 5 사진 이동
     private var lastX = 0f; private var lastY = 0f
+    private var multiTouch = false
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(ev: MotionEvent): Boolean {
+        scaleDetector.onTouchEvent(ev)
+        tapDetector.onTouchEvent(ev)
+        parent?.requestDisallowInterceptTouchEvent(true)
+        if (ev.pointerCount > 1) {
+            // 두 손가락 = 확대·축소만 한다 (네모가 같이 움직이지 않게)
+            multiTouch = true; drag = -1
+            return true
+        }
         val r = cropOnScreen()
         when (ev.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                multiTouch = false
                 lastX = ev.x; lastY = ev.y
                 drag = corners(r).indexOfFirst { (x, y) -> abs(ev.x - x) < dp(28f) && abs(ev.y - y) < dp(28f) }
                 if (drag < 0 && r.contains(ev.x, ev.y)) drag = 4
                 if (drag < 0) {
-                    // 네모 밖을 누르면 그 자리로 네모를 옮긴다
-                    moveTo(ev.x, ev.y); drag = 4
+                    if (zoom > 1.01f) drag = 5          // 확대 중이면 사진을 움직인다
+                    else { moveTo(ev.x, ev.y); drag = 4 } // 아니면 네모를 그 자리로
                 }
-                parent?.requestDisallowInterceptTouchEvent(true)
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                if (multiTouch) { lastX = ev.x; lastY = ev.y; return true }
+                if (drag == 5) {
+                    panX += ev.x - lastX; panY += ev.y - lastY
+                    lastX = ev.x; lastY = ev.y
+                    updateImgRect(); invalidate()
+                    return true
+                }
                 val dx = (ev.x - lastX) / imgRect.width()
                 val dy = (ev.y - lastY) / imgRect.height()
                 lastX = ev.x; lastY = ev.y
-                val minW = dp(16f) / imgRect.width(); val minH = dp(16f) / imgRect.height()
+                val minW = dp(12f) / imgRect.width(); val minH = dp(12f) / imgRect.height()
                 when (drag) {
                     0 -> { crop.left = (crop.left + dx).coerceIn(0f, crop.right - minW); crop.top = (crop.top + dy).coerceIn(0f, crop.bottom - minH) }
                     1 -> { crop.right = (crop.right + dx).coerceIn(crop.left + minW, 1f); crop.top = (crop.top + dy).coerceIn(0f, crop.bottom - minH) }

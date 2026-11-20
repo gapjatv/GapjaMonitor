@@ -12,8 +12,8 @@ android {
         // 화면 캡처(MediaProjection)와 포그라운드 서비스 타입이 필요하므로 최소 29.
         minSdk = 29
         targetSdk = 35
-        versionCode = 3
-        versionName = "1.2"
+        versionCode = 4
+        versionName = "1.3"
 
         // OpenCV 네이티브 라이브러리를 필요한 ABI만 담아 APK 크기를 줄인다.
         // (요즘 안드로이드 폰은 전부 arm64-v8a 다. 구형 32비트 폰도 쓰려면 armeabi-v7a 를 남겨 둔다)

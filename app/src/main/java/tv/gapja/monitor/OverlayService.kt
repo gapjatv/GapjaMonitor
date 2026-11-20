@@ -46,10 +46,12 @@ import kotlin.math.min
  *   • [조절] 을 누르면 사진 줄을 끌어서 옮기고, 끝의 점을 끌어서 길이를 바꾼다
  *   • [캡처] 를 누르면 지금 게임 화면을 찍어서 보스 사진을 잘라 등록할 수 있다
  *
- * ⚠️ 평소에는 사진 줄이 터치를 받지 않는다(FLAG_NOT_TOUCHABLE).
- *    그래야 사진 위를 눌러도 게임이 그대로 조작된다.
- *    Android 12부터는 위에 덮인 창의 불투명도가 0.8 이하여야 터치가 아래로 전달되므로
- *    평소에는 창 투명도를 0.8 로 둔다.
+ * ⚠️ 사진 줄 터치 — 두 가지 중 고를 수 있다 (조절 메뉴 · 메인 화면)
+ *    • 기본: 언제든 사진 줄을 손가락으로 끌어서 옮길 수 있다.
+ *      대신 사진이 놓인 자리는 게임 터치가 막힌다. (사진 사이 빈칸 포함, 줄 크기만큼)
+ *    • 터치 통과: 사진 줄이 터치를 받지 않아(FLAG_NOT_TOUCHABLE) 사진 위를 눌러도 게임이 눌린다.
+ *      Android 12부터는 덮인 창의 불투명도가 0.8 이하여야 터치가 아래로 전달되므로
+ *      이때는 창 투명도를 0.8 로 둔다. 위치는 [조절] 에서 옮긴다.
  *
  * ⚠️ '다른 앱 위에 표시' 권한이 필요하다. 없으면 조용히 아무것도 하지 않는다.
  */
@@ -121,15 +123,15 @@ class OverlayService : Service() {
         stripLp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
-            overlayType(), normalFlags, PixelFormat.TRANSLUCENT
+            overlayType(), stripFlags(), PixelFormat.TRANSLUCENT
         ).apply {
             gravity = Gravity.TOP or Gravity.START
             x = Prefs.overlayX(this@OverlayService)
             y = Prefs.overlayY(this@OverlayService)
-            alpha = 0.8f
+            alpha = stripAlpha()
         }
 
-        // 조절 모드에서만 터치가 들어온다: 끌어서 이동 / 끝의 점을 끌어서 길이 조절
+        // 끌어서 이동 (언제든) / 조절 모드에서는 끝의 주황 점을 끌어서 길이 조절
         var mode = 0           // 0 없음, 1 이동, 2 길이
         var sx = 0f; var sy = 0f
         var ox = 0; var oy = 0
@@ -140,7 +142,7 @@ class OverlayService : Service() {
                 MotionEvent.ACTION_DOWN -> {
                     sx = ev.rawX; sy = ev.rawY; ox = lp.x; oy = lp.y
                     startLen = v.currentLengthPx()
-                    mode = if (v.isOnHandle(ev.x, ev.y)) 2 else 1
+                    mode = if (editing && v.isOnHandle(ev.x, ev.y)) 2 else 1
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -231,10 +233,15 @@ class OverlayService : Service() {
                 action()
             }
         }
+        val startBtn = menuBtn("시작", "#E616A085") { startFromOverlay() }
+        val pauseBtn = menuBtn("일시정지", "#E67F8C8D") { togglePause() }
+        val capBtn = menuBtn("캡처", "#E62980B9") { takeSnapshot() }
+        val resetBtn = menuBtn("리셋", "#E6D35400") { resetBosses() }
+        menuStart = startBtn; menuPause = pauseBtn; menuCapture = capBtn; menuReset = resetBtn
         val items = listOf(
-            menuBtn("캡처", "#E62980B9") { takeSnapshot() },
+            startBtn, pauseBtn, capBtn,
             menuBtn("조절", "#E616A085") { setEditing(!editing) },
-            menuBtn("리셋", "#E6D35400") { resetBosses() },
+            resetBtn,
             menuBtn("끄기", "#E6C0392B") { exitApp() }
         )
         chipMenuBtns.clear()
@@ -284,7 +291,10 @@ class OverlayService : Service() {
                 }
                 MotionEvent.ACTION_UP -> {
                     if (moved) Prefs.setChipPos(this, lp.x, lp.y)
-                    else menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    else {
+                        refreshMenu()
+                        menu.visibility = if (menu.visibility == View.VISIBLE) View.GONE else View.VISIBLE
+                    }
                     wakeChip()
                     true
                 }
@@ -294,6 +304,49 @@ class OverlayService : Service() {
         }
         try { wm?.addView(box, chipLp) } catch (_: Exception) {}
         wakeChip()
+    }
+
+    private var menuStart: TextView? = null
+    private var menuPause: TextView? = null
+    private var menuCapture: TextView? = null
+    private var menuReset: TextView? = null
+
+    /**
+     * 감시 상태에 맞게 메뉴를 바꾼다.
+     *   감시 중  → 일시정지(재개) · 캡처 · 조절 · 리셋 · 끄기
+     *   멈춤     → 시작 · 조절 · 끄기
+     */
+    private fun refreshMenu() {
+        val run = Bus.running
+        menuStart?.visibility = if (run) View.GONE else View.VISIBLE
+        menuPause?.visibility = if (run) View.VISIBLE else View.GONE
+        menuCapture?.visibility = if (run) View.VISIBLE else View.GONE
+        menuReset?.visibility = if (run) View.VISIBLE else View.GONE
+        menuPause?.text = if (Bus.paused) "재개" else "일시정지"
+        chipMain?.text = when {
+            !run -> "보스설정 · 멈춤"
+            Bus.paused -> "보스설정 · ⏸"
+            else -> "보스설정"
+        }
+    }
+
+    /** [시작] 게임 화면에서 바로 감시를 시작한다 (화면 공유 동의 창만 한 번 뜬다) */
+    private fun startFromOverlay() {
+        try {
+            startActivity(Intent(this, ConsentActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))
+        } catch (e: Exception) {
+            Bus.log("⚠️ 시작 화면을 열지 못했습니다: ${e.message}")
+        }
+    }
+
+    /** [일시정지]/[재개] 화면 공유는 그대로 두고 인식만 멈췄다 켠다 */
+    private fun togglePause() {
+        val pausing = !Bus.paused
+        CaptureService.send(this, if (pausing) CaptureService.ACTION_PAUSE else CaptureService.ACTION_RESUME)
+        Bus.paused = pausing
+        refreshMenu()
+        Toast.makeText(this, if (pausing) "인식을 잠시 멈췄습니다" else "인식을 다시 시작합니다", Toast.LENGTH_SHORT).show()
     }
 
     /** 버튼 크기를 설정값에 맞춘다 (보스설정 → 조절 → 버튼 크기) */
@@ -336,12 +389,25 @@ class OverlayService : Service() {
 
     // ── 조절 모드 ────────────────────────────────────────────────
 
+    /** 사진 줄 창의 터치 설정 — 조절 중이거나 '터치 통과' 를 껐으면 터치를 받는다 */
+    private fun stripFlags(): Int =
+        if (editing || !Prefs.stripPassThrough(this)) editFlags else normalFlags
+
+    private fun stripAlpha(): Float =
+        if (editing || !Prefs.stripPassThrough(this)) 1f else 0.8f
+
+    /** 설정이 바뀌었으면 사진 줄 창에 반영한다 */
+    private fun applyStripTouchMode() {
+        val lp = stripLp ?: return
+        val f = stripFlags(); val a = stripAlpha()
+        if (lp.flags == f && lp.alpha == a) return
+        lp.flags = f; lp.alpha = a
+        try { wm?.updateViewLayout(strip, lp) } catch (_: Exception) {}
+    }
+
     private fun setEditing(on: Boolean) {
         editing = on
-        val lp = stripLp ?: return
-        lp.flags = if (on) editFlags else normalFlags
-        lp.alpha = if (on) 1f else 0.8f
-        try { wm?.updateViewLayout(strip, lp) } catch (_: Exception) {}
+        applyStripTouchMode()
         if (on) showPanel() else hidePanel()
         render()
     }
@@ -413,6 +479,9 @@ class OverlayService : Service() {
         box.addView(check("보스 사진 전체 표시", { Prefs.overlayShowAll(this) }) { Prefs.setOverlayShowAll(this, it) })
         box.addView(check("침공 특수보스 사진 표시", { Prefs.showSpecial(this) }) { Prefs.setShowSpecial(this, it) })
         box.addView(check("자동 축소 (보스가 늘면 줄여서 다 보이게)", { Prefs.autoShrink(this) }) { Prefs.setAutoShrink(this, it) })
+        box.addView(check("사진 터치 통과 (사진 위도 게임이 눌림 · 대신 이동은 여기서만)", { Prefs.stripPassThrough(this) }) {
+            Prefs.setStripPassThrough(this, it)
+        })
 
         // [보스설정] 버튼 크기
         val btnLabel = label("")
@@ -501,6 +570,8 @@ class OverlayService : Service() {
 
     private fun render() {
         applyChipScale()
+        applyStripTouchMode()
+        refreshMenu()
         val v = strip ?: return
         val lp = stripLp ?: return
         val showAll = Prefs.overlayShowAll(this)
@@ -610,7 +681,8 @@ class BossStripView(ctx: Context) : View(ctx) {
     private var d = maxD
     private val gap get() = dp(4f).toInt()
     private val labelH get() = max(dp(11f), d * 0.26f).toInt()
-    private val pad get() = dp(12f).toInt()
+    /** 조절 중에는 주황 테두리·점 자리를 넉넉히, 평소에는 게임을 덜 가리게 좁게 */
+    private val pad get() = dp(if (editing) 12f else 3f).toInt()
 
     private val circleCache = HashMap<String, Bitmap?>()
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
@@ -710,7 +782,8 @@ class BossStripView(ctx: Context) : View(ctx) {
             if (highlightLast && i == items.size - 1) {
                 ringPaint.color = Color.parseColor("#F39C12")
                 ringPaint.strokeWidth = max(dp(2.5f), d * 0.07f)
-                canvas.drawCircle(cx, cy, d / 2f + ringPaint.strokeWidth, ringPaint)
+                // 사진 테두리 위에 겹쳐 그린다 (바깥에 그리면 좁은 여백에서 잘린다)
+                canvas.drawCircle(cx, cy, d / 2f - ringPaint.strokeWidth / 2f, ringPaint)
             }
 
             val ty = cy + d / 2f + labelH * 0.85f

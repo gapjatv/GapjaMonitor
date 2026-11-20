@@ -260,6 +260,34 @@ object Prefs {
         e.apply()
     }
 
+    // ── 인식용 사진: PC 사진 / 폰에서 새로 등록 ──
+
+    /** true 면 앱에 넣은 PC 사진도 인식에 쓴다. false('새로 등록')면 내가 등록한 사진만 쓴다 */
+    fun usePcTemplates(ctx: Context): Boolean = sp(ctx).getBoolean("use_pc_tpl", true)
+
+    fun setUsePcTemplates(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean("use_pc_tpl", on).putBoolean("tpl_asked", true).apply()
+
+    /** 처음 실행할 때 'PC 사진 / 새로 등록' 을 물어봤는지 */
+    fun templateSourceAsked(ctx: Context): Boolean = sp(ctx).getBoolean("tpl_asked", false)
+
+    /** 내가 직접 캡처했거나 가져온 인식용 사진 파일 이름들 */
+    fun userTemplates(ctx: Context): Set<String> =
+        sp(ctx).getStringSet("user_tpls", emptySet())?.toSet() ?: emptySet()
+
+    fun addUserTemplate(ctx: Context, name: String) {
+        val set = userTemplates(ctx).toMutableSet(); set.add(name)
+        sp(ctx).edit().putStringSet("user_tpls", set).apply()
+    }
+
+    fun clearUserTemplates(ctx: Context) = sp(ctx).edit().remove("user_tpls").apply()
+
+    /** 보스 사진 줄 터치 통과 — 켜면 사진 위를 눌러도 게임이 눌리고(사진 고정), 끄면 사진을 끌어서 옮길 수 있다 */
+    fun stripPassThrough(ctx: Context): Boolean = sp(ctx).getBoolean("strip_pass", false)
+
+    fun setStripPassThrough(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean("strip_pass", on).apply()
+
     /** 기본 자료(보스 사진·인식 사진·음성)를 앱에 풀어 둔 버전 */
     fun assetsVersion(ctx: Context): Int = sp(ctx).getInt("assets_ver", 0)
 

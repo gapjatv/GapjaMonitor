@@ -82,6 +82,16 @@ class CaptureService : Service() {
     private var lobbyNextCheck = 0L
     /** 로비로 초기화한 직후 잠깐 보스 검사를 쉰다 (PC: 2초) */
     private var lobbyQuietUntil = 0L
+    /**
+     * 지금 로비 화면에 있는지.
+     * 로비 화면에도 보스 그림이 나오는 곳이 있어서, 로비에 있는 동안은 보스 검사를 아예 쉰다.
+     * 로비가 [LOBBY_EXIT_MS] 동안 안 보여야 다시 보스를 찾는다.
+     */
+    private var inLobby = false
+    private var lobbyLastSeen = 0L
+
+    /** [보스설정 → 일시정지] — 화면 공유는 유지한 채 인식만 멈춘다 (다시 켤 때 동의 창이 안 뜬다) */
+    @Volatile private var paused = false
 
     // ── 배속 (배속 고정을 끈 경우만 화면에서 인식) ──
     private var speedNextCheck = 0L
@@ -123,6 +133,20 @@ class CaptureService : Service() {
             // 판 상태를 바꾸는 동작도 같은 스레드에서 차례로 처리한다 (동시 접근 충돌 방지)
             ACTION_STOP -> if (running) handlerOn().post { stopEverything() } else stopEverything()
             ACTION_UNDO -> handlerOn().post { undoLast() }
+            ACTION_PAUSE -> handlerOn().post {
+                paused = true; Bus.paused = true
+                warns.clear()
+                Bus.log("⏸ [일시정지] 화면 공유는 유지한 채 인식을 멈췄습니다. [재개] 로 바로 다시 시작합니다.")
+                updateNotification("일시정지 · ${session.mode.label}")
+                Bus.onState(session, seq)
+            }
+            ACTION_RESUME -> handlerOn().post {
+                paused = false; Bus.paused = false
+                lobbyNextCheck = 0L; inLobby = false
+                Bus.log("▶️ [재개] 보스 인식을 다시 시작합니다.")
+                updateNotification("감시 중 · ${session.mode.label} (${PcDefaults.speedLabel(session.mode, Prefs.speedLock(this))})")
+                Bus.onState(session, seq)
+            }
             ACTION_RESET -> handlerOn().post {
                 if (session.activationOrder.isNotEmpty()) Bus.log("🔄 [리셋] 보스 사진을 초기화합니다.")
                 endGame()
@@ -167,8 +191,10 @@ class CaptureService : Service() {
 
         proj.registerCallback(object : MediaProjection.Callback() {
             override fun onStop() {
-                Bus.log("⏹ 화면 공유가 중단되었습니다. (화면 잠김 또는 사용자 중지)")
-                stopEverything()
+                Bus.log("⏹ 화면 공유가 중단되었습니다. (화면 잠김 또는 사용자 중지) " +
+                        "게임 위 [보스설정 → 시작] 으로 바로 다시 켤 수 있습니다.")
+                if (running) handlerOn().post { stopEverything(keepOverlay = true) }
+                else stopEverything(keepOverlay = true)
             }
         }, handlerOn())
 
@@ -187,7 +213,8 @@ class CaptureService : Service() {
         Bus.onState(session, seq)
         OverlayService.start(this)
         currentSpeed = if (Prefs.speedLock(this)) 2 else 1
-        lobbyNextCheck = 0L; lobbyQuietUntil = 0L
+        lobbyNextCheck = 0L; lobbyQuietUntil = 0L; inLobby = false
+        paused = false; Bus.paused = false
         updateNotification("감시 중 · ${session.mode.label} (${PcDefaults.speedLabel(session.mode, Prefs.speedLock(this))})")
         Bus.log("▶ 감시를 시작했습니다. (${w}×${h}, 축소 ${(downscale * 100).toInt()}%, " +
                 "${intervalMs}ms 간격, 템플릿 ${templates.count()}장)")
@@ -234,7 +261,12 @@ class CaptureService : Service() {
         }
     }
 
-    private fun stopEverything() {
+    /**
+     * 감시를 멈춘다.
+     * @param keepOverlay true 면 게임 위 [보스설정] 버튼은 남겨 둔다 —
+     *        화면 공유가 OS 쪽에서 끊겼을 때 게임 화면에서 바로 [시작] 을 다시 누를 수 있게.
+     */
+    private fun stopEverything(keepOverlay: Boolean = false) {
         if (!running && projection == null) return
         running = false
         endGame()
@@ -242,7 +274,8 @@ class CaptureService : Service() {
         try { reader?.close() } catch (_: Exception) {}
         try { projection?.stop() } catch (_: Exception) {}
         virtualDisplay = null; reader = null; projection = null
-        OverlayService.stop(this)
+        if (!keepOverlay) OverlayService.stop(this)
+        paused = false; Bus.paused = false; Bus.lobby = false
         Bus.running = false
         Bus.log("⏹ 감시를 멈췄습니다.")
         updateNotification("멈춤")
@@ -285,6 +318,8 @@ class CaptureService : Service() {
                 plane.buffer.rewind()
                 cb(f)
             }
+            // 일시정지 중에는 캡처(사진 찍기)만 되고 인식은 쉰다
+            if (paused) return
             val full = CvOps.fromRgba(plane.buffer, img.width, img.height, plane.rowStride)
             screen = if (downscale >= 0.999) full else {
                 val s = CvOps.resize(full, (img.width * downscale).toInt(),
@@ -301,9 +336,18 @@ class CaptureService : Service() {
             // ① 로비 화면 — 인식되면 모드를 맞추고 보스 사진을 초기화한다
             if (now >= lobbyNextCheck) {
                 lobbyNextCheck = now + LOBBY_CHECK_MS
-                if (checkLobby(scr, now)) return
+                if (checkLobby(scr, now)) {
+                    if (!inLobby) Bus.lobby = true
+                    inLobby = true; lobbyLastSeen = now
+                    return
+                }
+                if (inLobby && now - lobbyLastSeen >= LOBBY_EXIT_MS) {
+                    inLobby = false; Bus.lobby = false
+                    Bus.log("🎮 로비를 벗어났습니다. 보스 인식을 다시 시작합니다.")
+                }
             }
-            if (now < lobbyQuietUntil) return
+            // 로비에 있는 동안(로비 그림 속 보스 오인식 방지)과 초기화 직후에는 보스를 찾지 않는다
+            if (inLobby || now < lobbyQuietUntil) return
 
             // ② 배속 — 배속 고정을 끈 경우만 화면에서 1배속/2배속을 읽는다
             if (!Prefs.speedLock(this) && now >= speedNextCheck) {
@@ -341,10 +385,10 @@ class CaptureService : Service() {
             PcDefaults.LOBBY_INVASION to GameMode.INVASION,
             PcDefaults.LOBBY_COMMON to null
         )) {
-            val files = listOf("$lobby.png") + templates.extraShots(lobby)
+            val files = templates.lobbyShots(lobby)
             var best = 0.0
             for (fn in files) {
-                val t = templates.get(fn) ?: continue
+                val t = templates.getUsable(fn) ?: continue
                 val r = matcher.multiScale(scr, t, PcDefaults.LOBBY_THRESHOLD, downscale = downscale)
                 if (r.score > best) best = r.score
                 if (best >= PcDefaults.LOBBY_THRESHOLD) break
@@ -414,9 +458,12 @@ class CaptureService : Service() {
      * @return 활성화되었으면 true
      */
     private fun detect(name: String, scr: Mat, tpl: Mat, now: Long): Boolean {
-        // PC판에서 쓰던 기준값을 기본으로, 앱에서 바꾼 값이 있으면 그걸로
-        val th = BossCatalog.threshold(name, session.mode,
-            PcDefaults.thresholds(session.mode, Prefs.thresholds(this)))
+        // PC 사진을 쓸 때는 PC판 기준값(대부분 60%)을,
+        // 폰에서 새로 등록한 사진만 쓸 때는 폰판 기준값(72%)을 쓴다.
+        // 폰 사진은 크기가 정확히 맞아서 높은 기준으로도 잘 잡히고, 엉뚱한 곳(로비 그림 등)에 덜 걸린다.
+        val th = if (Prefs.usePcTemplates(this))
+            BossCatalog.threshold(name, session.mode, PcDefaults.thresholds(session.mode, Prefs.thresholds(this)))
+        else BossCatalog.threshold(name, session.mode, Prefs.thresholds(this))
         val strict = BossCatalog.isStrict(name, Prefs.strictBosses(this))
 
         var out = matcher.multiScale(scr, tpl, th, downscale = downscale)
@@ -766,6 +813,11 @@ class CaptureService : Service() {
         }
 
         const val ACTION_EXIT = "tv.gapja.monitor.EXIT"
+        const val ACTION_PAUSE = "tv.gapja.monitor.PAUSE"
+        const val ACTION_RESUME = "tv.gapja.monitor.RESUME"
+
+        /** 로비가 이 시간 동안 안 보여야 로비를 벗어난 것으로 본다 */
+        private const val LOBBY_EXIT_MS = 2500L
 
         /** 로비 검사 간격 (PC 는 0.5초마다) */
         private const val LOBBY_CHECK_MS = 600L
@@ -775,6 +827,22 @@ class CaptureService : Service() {
         private const val SPEED_CHECK_MS = 600L
         /** 경보 타이머 간격 (PC: 0.5초) */
         private const val WARN_TICK_MS = 500L
+
+        /**
+         * 화면 공유 동의 창을 띄우는 Intent.
+         *
+         * Android 14부터는 동의 창에서 '앱 하나 공유 / 전체 화면 공유' 를 고르게 되어 있는데,
+         * 이 앱은 게임 화면 전체를 봐야 하므로 '전체 화면' 으로 정해서 요청한다.
+         * (고르는 단계 없이 [시작] 만 누르면 된다. 동의 창 자체는 OS 규칙이라 없앨 수 없다)
+         */
+        fun captureIntent(ctx: Context): Intent {
+            val mgr = ctx.getSystemService(android.media.projection.MediaProjectionManager::class.java)
+            return if (Build.VERSION.SDK_INT >= 34) {
+                mgr.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay())
+            } else {
+                mgr.createScreenCaptureIntent()
+            }
+        }
 
         /** 지금 돌고 있는 서비스 (캡처 요청용) */
         @Volatile private var instance: CaptureService? = null

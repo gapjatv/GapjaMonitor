@@ -55,10 +55,43 @@ class TemplateStore(private val ctx: Context) {
     /** 보스의 기본 템플릿 */
     fun forBoss(name: String): Mat? = get("$name.png")
 
+    // ── 내가 등록한 사진 / PC 사진 구분 ─────────────────────────
+
+    /** 내가 폰에서 직접 캡처했거나 가져온 사진인지 (앱에 같이 넣은 PC 사진이 아닌지) */
+    fun isUser(fileName: String): Boolean = fileName in Prefs.userTemplates(ctx)
+
+    /**
+     * 인식에 써도 되는 사진인지.
+     * '새로 등록' 을 고르면 PC 사진은 쓰지 않고 내가 등록한 사진만 쓴다.
+     * (PC 화면과 폰 화면은 크기·모양이 달라서 PC 사진이 엉뚱한 곳에 걸리는 일이 있다)
+     * 배속 표시는 예외로 항상 쓴다.
+     */
+    fun usable(fileName: String): Boolean {
+        if (!File(dir, fileName).exists()) return false
+        if (Prefs.usePcTemplates(ctx)) return true
+        return isUser(fileName) || fileName.contains("배속상태")
+    }
+
+    fun getUsable(fileName: String): Mat? = if (usable(fileName)) get(fileName) else null
+
+    /** 로비 화면 사진들 (기본 + 보조) 중 쓸 수 있는 것 */
+    fun lobbyShots(lobby: String): List<String> =
+        (listOf("$lobby.png") + extraShots(lobby)).filter { usable(it) }
+
+    /** 그 보스(또는 로비)에 내가 등록한 사진이 하나라도 있는지 — 등록 도우미용 */
+    fun hasUserShot(name: String, mode: GameMode): Boolean {
+        val bases = if (mode == GameMode.INVASION && !PcDefaults.isLobby(name))
+            listOf("${INVASION_PREFIX}$name", name) else listOf(name)
+        return bases.any { b ->
+            (listOf("$b.png") + BossCatalog.EXTRA_SHOT_SUFFIXES.map { "$b$it.png" })
+                .any { isUser(it) && File(dir, it).exists() }
+        }
+    }
+
     /** 모드에 맞는 기본 템플릿 — 침공이면 '침공_' 사진을 먼저 쓴다 */
     fun forBoss(name: String, mode: GameMode): Mat? {
-        if (mode == GameMode.INVASION) get("${INVASION_PREFIX}$name.png")?.let { return it }
-        return get("$name.png")
+        if (mode == GameMode.INVASION) getUsable("${INVASION_PREFIX}$name.png")?.let { return it }
+        return getUsable("$name.png")
     }
 
     /** 보스의 보조 스샷 파일 이름 목록 (존재하는 것만) */
@@ -70,7 +103,7 @@ class TemplateStore(private val ctx: Context) {
     /** 모드에 맞는 보조 스샷 — 침공이면 '침공_' 보조 스샷도 함께 */
     fun extraShots(name: String, mode: GameMode): List<String> {
         val inv = if (mode == GameMode.INVASION) extraShots("${INVASION_PREFIX}$name") else emptyList()
-        return inv + extraShots(name)
+        return (inv + extraShots(name)).filter { usable(it) }
     }
 
     /** 템플릿이 있는 보스만 돌려준다 */
@@ -80,8 +113,8 @@ class TemplateStore(private val ctx: Context) {
     /** 그 모드에서 인식할 수 있는 보스 */
     fun availableBosses(all: List<String>, mode: GameMode): List<String> =
         all.filter {
-            File(dir, "$it.png").exists() ||
-                    (mode == GameMode.INVASION && File(dir, "${INVASION_PREFIX}$it.png").exists())
+            usable("$it.png") || extraShots(it, mode).isNotEmpty() ||
+                    (mode == GameMode.INVASION && usable("${INVASION_PREFIX}$it.png"))
         }
 
     /**
@@ -99,7 +132,11 @@ class TemplateStore(private val ctx: Context) {
                 ?: "$base${BossCatalog.EXTRA_SHOT_SUFFIXES.last()}.png"
         }
         return try {
-            File(dir, name).outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            val f = File(dir, name)
+            f.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
+            Prefs.addUserTemplate(ctx, name)
+            // 앱을 지웠다 다시 깔아도 되살릴 수 있게 '다운로드/GapjaMonitor' 에도 한 장 남긴다
+            Backup.saveCopy(ctx, f)
             cache.clear()
             generation++
             name
@@ -121,7 +158,8 @@ class TemplateStore(private val ctx: Context) {
         var ok = 0
         val skipped = ArrayList<String>()
         for (u in uris) {
-            val name = displayName(u)
+            // 백업 폴더에서 가져올 때 붙는 ' (1)' 같은 꼬리는 떼어낸다
+            val name = displayName(u)?.replace(Regex(" \\(\\d+\\)(?=\\.png$)", RegexOption.IGNORE_CASE), "")
             if (name == null || !name.lowercase().endsWith(".png")) {
                 skipped.add(name ?: u.toString()); continue
             }
@@ -129,6 +167,7 @@ class TemplateStore(private val ctx: Context) {
                 ctx.contentResolver.openInputStream(u)?.use { ins ->
                     File(dir, name).outputStream().use { outs -> ins.copyTo(outs) }
                 }
+                Prefs.addUserTemplate(ctx, name)
                 ok++
             } catch (e: Exception) {
                 Log.w(TAG, "복사 실패: $name", e); skipped.add(name)
@@ -143,6 +182,7 @@ class TemplateStore(private val ctx: Context) {
     fun clear(): Int {
         var n = 0
         dir.listFiles()?.forEach { if (it.delete()) n++ }
+        Prefs.clearUserTemplates(ctx)
         cache.clear()
         generation++
         return n

@@ -8,4 +8,13 @@
         <item name="android:textColorPrimary">#FFFFFFFF</item>
         <item name="colorAccent">#FF1ABC9C</item>
     </style>
+
+    <!-- [보스설정 → 시작] 때 잠깐 뜨는 투명 화면 (게임 화면이 그대로 보이게) -->
+    <style name="Theme.Gapja.Transparent" parent="Theme.AppCompat.NoActionBar">
+        <item name="android:windowIsTranslucent">true</item>
+        <item name="android:windowBackground">@android:color/transparent</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:backgroundDimEnabled">false</item>
+        <item name="android:windowAnimationStyle">@null</item>
+    </style>
 </resources>

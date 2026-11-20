@@ -11,6 +11,8 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
+import tv.gapja.monitor.core.BossCatalog
+import tv.gapja.monitor.core.GameMode
 import java.io.File
 import kotlin.math.max
 
@@ -41,6 +43,40 @@ class GalleryActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#FF1ABC9C")); textSize = 20f
             setTypeface(typeface, Typeface.BOLD)
         })
+
+        // ── 등록 현황 (폰에서 직접 등록한 사진 기준) ──
+        val store = TemplateStore(this)
+        col.addView(TextView(this).apply {
+            text = if (Prefs.usePcTemplates(this@GalleryActivity))
+                "지금은 PC 사진을 함께 쓰는 중입니다. 아래 ✔ 는 폰에서 직접 등록한 사진이 있는 항목이에요."
+            else "지금은 폰에서 등록한 사진만 씁니다. ○ 인 항목은 아직 인식되지 않으니 [보스설정 → 캡처] 로 등록해 주세요."
+            setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
+            setPadding(0, dp(6), 0, 0)
+        })
+        for (m in listOf(GameMode.NORMAL, GameMode.INVASION)) {
+            val targets = BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m)
+            val done = targets.count { store.hasUserShot(it, m) }
+            col.addView(TextView(this).apply {
+                text = "${m.label} 등록 현황  $done / ${targets.size}"
+                setTextColor(Color.WHITE); textSize = 15f
+                setTypeface(typeface, Typeface.BOLD)
+                setPadding(0, dp(14), 0, dp(4))
+            })
+            val avail = UiInsets.contentWidth(this, 900) - dp(28)
+            val cols = max(2, avail / dp(110))
+            val grid = GridLayout(this).apply { columnCount = cols }
+            for (t in targets) {
+                val ok = store.hasUserShot(t, m)
+                grid.addView(TextView(this).apply {
+                    text = (if (ok) "✔ " else "○ ") + t
+                    setTextColor(Color.parseColor(if (ok) "#FF2ECC71" else "#FFE0E6EB"))
+                    textSize = 12f
+                    setTypeface(typeface, if (PcDefaults.isLobby(t)) Typeface.BOLD else Typeface.NORMAL)
+                    setPadding(dp(4), dp(3), dp(4), dp(3))
+                }, GridLayout.LayoutParams().apply { width = avail / cols })
+            }
+            col.addView(grid)
+        }
 
         val tplDir = File(filesDir, "templates")
         val all = (tplDir.listFiles { f -> f.name.lowercase().endsWith(".png") } ?: emptyArray())
@@ -97,8 +133,9 @@ class GalleryActivity : AppCompatActivity() {
                 setImageBitmap(loadThumb(f, itemW))
             }
             box.addView(iv, LinearLayout.LayoutParams(itemW - dp(8), if (round) itemW - dp(8) else (itemW * 0.7f).toInt()))
+            val mine = f.name in Prefs.userTemplates(this)
             box.addView(TextView(this).apply {
-                text = f.name.removeSuffix(".png")
+                text = f.name.removeSuffix(".png") + if (mine) "\n✔ 내 사진" else ""
                 setTextColor(Color.parseColor("#FFD5DEE6")); textSize = 11f
                 gravity = Gravity.CENTER
                 maxLines = 2

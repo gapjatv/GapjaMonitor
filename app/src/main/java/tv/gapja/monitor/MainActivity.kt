@@ -5,7 +5,6 @@ import android.app.Activity
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
-import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -19,6 +18,7 @@ import android.widget.Button
 import android.widget.CheckBox
 import android.widget.EditText
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.SeekBar
@@ -51,6 +51,8 @@ class MainActivity : AppCompatActivity() {
 
     private var mode = GameMode.INVASION
     private var modeBtn: Button? = null
+    private var sourceView: TextView? = null
+    private var sourceBtn: Button? = null
 
     private val changeListener: () -> Unit = { refresh() }
 
@@ -77,6 +79,18 @@ class MainActivity : AppCompatActivity() {
     private val notifLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { /* 거부해도 동작은 한다 — 알림만 안 보인다 */ }
+
+    /** 백업(다운로드/GapjaMonitor)에서 내 사진 되살리기 */
+    private val pickBackup = registerForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris ->
+        if (uris.isNullOrEmpty()) return@registerForActivityResult
+        val (ok, skipped) = templates.importAll(uris)
+        Bus.log("📦 백업에서 내 사진 $ok 장을 되살렸습니다." +
+                if (skipped.isNotEmpty()) " (PNG가 아니어서 건너뜀: ${skipped.size}개)" else "")
+        toast("내 사진 $ok 장을 되살렸습니다")
+        refresh()
+    }
 
     private val pickTemplates = registerForActivityResult(
         ActivityResultContracts.OpenMultipleDocuments()
@@ -162,6 +176,64 @@ class MainActivity : AppCompatActivity() {
         Bus.addChangeListener(changeListener)
         Bus.recordedGames = seqRepo.load().games.size
         refresh()
+
+        // 처음 켤 때 한 번 — PC 사진을 그대로 쓸지, 폰에서 새로 등록할지 묻는다
+        if (!Prefs.templateSourceAsked(this)) askTemplateSource()
+    }
+
+    private fun versionName(): String = try {
+        packageManager.getPackageInfo(packageName, 0).versionName ?: ""
+    } catch (_: Exception) { "" }
+
+    /**
+     * 인식용 사진을 어떻게 쓸지 고른다.
+     *   • PC 사진 그대로: 앱에 넣어 둔 PC 캡처를 쓴다. 바로 쓸 수 있지만 폰 화면과 달라 덜 맞을 수 있다.
+     *   • 폰에서 새로 등록: 내가 폰에서 캡처한 사진만 쓴다. 처음에 등록하는 수고가 있지만 인식이 가장 정확하다.
+     */
+    private fun askTemplateSource() {
+        val usingPc = Prefs.usePcTemplates(this)
+        val mine = Prefs.userTemplates(this).size
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("인식용 보스 사진을 어떻게 할까요?")
+            .setMessage(
+                "PC 화면과 폰 화면은 크기·모양이 조금씩 달라서, 폰에서 직접 캡처한 사진이 인식이 가장 정확하고 " +
+                "엉뚱한 곳(로비 그림 등)에 덜 걸립니다.\n\n" +
+                "• 새로 등록 (추천): 내가 폰에서 캡처한 사진만 씁니다. 게임 중 [보스설정 → 캡처] 로 " +
+                "보스와 로비 화면을 한 장씩 등록하세요. 지금 등록된 내 사진: ${mine}장\n\n" +
+                "• PC 사진 그대로: 앱에 들어 있는 PC 캡처를 씁니다. 바로 쓸 수 있습니다.\n\n" +
+                "언제든 메인 화면 '인식용 사진' 에서 바꿀 수 있습니다." +
+                if (Prefs.templateSourceAsked(this)) "\n\n(지금: ${if (usingPc) "PC 사진 그대로" else "새로 등록"})" else ""
+            )
+            .setPositiveButton("새로 등록") { _, _ ->
+                Prefs.setUsePcTemplates(this, false)
+                Bus.log("🆕 [인식용 사진] 폰에서 새로 등록한 사진만 씁니다. 등록 현황은 '저장된 보스 사진 보기' 에서 확인하세요.")
+                refresh()
+                if (Prefs.userTemplates(this).isEmpty()) showRegisterGuide()
+            }
+            .setNegativeButton("PC 사진 그대로") { _, _ ->
+                Prefs.setUsePcTemplates(this, true)
+                Bus.log("🖥 [인식용 사진] 앱에 들어 있는 PC 사진을 씁니다. (직접 캡처한 사진도 함께 씁니다)")
+                refresh()
+            }
+            .setCancelable(Prefs.templateSourceAsked(this))
+            .show()
+    }
+
+    /** 새로 등록할 때 순서 안내 */
+    private fun showRegisterGuide() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("보스 사진 등록하는 법")
+            .setMessage(
+                "1. [시작] 을 누르고 게임을 켭니다.\n" +
+                "2. 보스가 나오면 게임 위 [보스설정 → 캡처] 를 누릅니다.\n" +
+                "3. 두 손가락으로 확대해서 주황 네모로 보스만 감싸고, 보스 이름을 고른 뒤 [저장].\n" +
+                "4. 로비 화면(태초로비 · 침공로비)과 '다시하기' 화면(공통로비)도 같은 방법으로 등록하면 " +
+                "판이 끝날 때 보스 사진이 자동으로 초기화됩니다.\n\n" +
+                "태초와 침공은 보스 그림이 조금 달라서 각각 등록해야 합니다. " +
+                "등록 현황은 '저장된 보스 사진 보기' 맨 위에 나옵니다."
+            )
+            .setPositiveButton("알겠어요", null)
+            .show()
     }
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
@@ -178,13 +250,24 @@ class MainActivity : AppCompatActivity() {
             UiInsets.contentWidth(this), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
         outer.addView(frame)
 
-        // ── 제목 ──
-        col.addView(TextView(this).apply {
+        // ── 제목 (갑자 캐릭터 + 이름) ──
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(ImageView(this).apply {
+            setImageResource(R.drawable.gapja_logo)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+        }, LinearLayout.LayoutParams(dp(64), dp(64)).also { it.rightMargin = dp(12) })
+        val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        titleBox.addView(TextView(this).apply {
             text = "갑자TV 관제탑"
             setTextColor(ACCENT); textSize = 22f
             setTypeface(typeface, Typeface.BOLD)
         })
-        col.addView(body("운빨존많겜 보스 알림 · 폰판"))
+        titleBox.addView(body("운빨존많겜 보스 알림 · 폰판 v${versionName()}"))
+        header.addView(titleBox)
+        col.addView(header)
 
         // ── 상태 ──
         statusView = TextView(this).apply {
@@ -257,6 +340,10 @@ class MainActivity : AppCompatActivity() {
         col.addView(check("자동 축소  (보스가 늘면 사진을 줄여 다 보이게)", Prefs.autoShrink(this)) {
             Prefs.setAutoShrink(this, it); Bus.settingsChanged()
         })
+        col.addView(check("사진 터치 통과  (켜면 사진 위도 게임이 눌림 · 끄면 사진을 손가락으로 끌어 옮김)",
+            Prefs.stripPassThrough(this)) {
+            Prefs.setStripPassThrough(this, it); Bus.settingsChanged()
+        })
         val hBtn = btn("가로", "#3C4B5A") {}
         val vBtn = btn("세로", "#3C4B5A") {}
         fun syncLayout() {
@@ -296,6 +383,30 @@ class MainActivity : AppCompatActivity() {
 
         // ── 보스 위험 경보 ──
         buildWarnings(col)
+
+        // ── 인식용 사진: PC 사진 / 새로 등록 ──
+        col.addView(h("인식용 사진"))
+        sourceView = TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 13f
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(CARD)
+            setLineSpacing(0f, 1.3f)
+        }
+        col.addView(sourceView)
+        sourceBtn = btn("", "#8E44AD") { askTemplateSource() }
+        col.addView(sourceBtn)
+        col.addView(row(
+            btn("📦 지금 백업", "#2C3E50") {
+                val n = Backup.saveAll(this)
+                toast(if (n > 0) "내 사진 ${n}장을 '${Backup.LOCATION}' 에 백업했습니다" else "백업할 내 사진이 아직 없습니다")
+            },
+            btn("♻️ 백업에서 되살리기", "#2C3E50") {
+                toast("'${Backup.LOCATION}' 폴더에서 사진을 모두 골라 주세요")
+                pickBackup.launch(arrayOf("image/png"))
+            }
+        ))
+        col.addView(body("직접 캡처한 사진은 앱을 껐다 켜도, 업데이트해도 그대로 남습니다. " +
+                "앱을 '삭제' 할 때만 지워지므로, 캡처할 때마다 '${Backup.LOCATION}' 에도 자동으로 한 장씩 남겨 둡니다."))
 
         // ── 기본 자료 ──
         col.addView(h("기본 자료 (PC에서 가져옴)"))
@@ -540,14 +651,17 @@ class MainActivity : AppCompatActivity() {
         if (templates.count() == 0) {
             toast("인식용 보스 사진이 없습니다. 고급 설정에서 PNG를 추가해 주세요"); return
         }
+        if (!Prefs.usePcTemplates(this) && Prefs.userTemplates(this).isEmpty()) {
+            // 새로 등록 모드인데 아직 한 장도 없으면 인식은 안 되지만, 캡처하려면 시작은 해야 한다
+            toast("아직 등록한 사진이 없습니다. 게임에서 [보스설정 → 캡처] 로 등록해 주세요")
+        }
         if (!OverlayService.canDraw(this)) {
             toast("게임 위에 사진을 띄우려면 '다른 앱 위에 표시'를 허용해 주세요")
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:$packageName")))
             return
         }
-        val mgr = getSystemService(MediaProjectionManager::class.java)
-        projectionLauncher.launch(mgr.createScreenCaptureIntent())
+        projectionLauncher.launch(CaptureService.captureIntent(this))
     }
 
     private fun shareJson() {
@@ -569,6 +683,14 @@ class MainActivity : AppCompatActivity() {
 
     private fun refresh() {
         if (!::statusView.isInitialized) return
+        val usePc = Prefs.usePcTemplates(this)
+        val m = GameMode.from(Prefs.mode(this))
+        val targets = BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m)
+        val done = targets.count { templates.hasUserShot(it, m) }
+        sourceView?.text = (if (usePc) "🖥 PC 사진 그대로 쓰는 중 (직접 캡처한 사진도 함께 씀)\n"
+                else "🆕 폰에서 새로 등록한 사진만 쓰는 중\n") +
+                "내가 등록한 사진: ${Prefs.userTemplates(this).size}장 · ${m.label} 등록 현황 $done/${targets.size}"
+        sourceBtn?.text = if (usePc) "🆕 폰에서 새로 등록해서 쓰기로 바꾸기" else "🖥 PC 사진도 같이 쓰기로 바꾸기"
         // 로비 인식으로 서비스가 모드를 바꿨을 수 있으니 저장된 값을 다시 읽는다
         mode = GameMode.from(Prefs.mode(this))
         modeBtn?.let { b ->
