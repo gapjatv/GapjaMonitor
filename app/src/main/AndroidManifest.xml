@@ -38,7 +38,10 @@
         <activity
             android:name=".CropActivity"
             android:exported="false"
+            android:excludeFromRecents="true"
+            android:taskAffinity=""
             android:label="보스 사진 만들기" />
+        <!-- ↑ 따로 떠 있는 화면으로 열어서, 저장하거나 취소하면 메인 화면이 아니라 게임으로 바로 돌아간다 -->
 
         <!-- 게임 위 [보스설정 → 시작] 때 화면 공유 동의만 받는 투명 화면 -->
         <activity

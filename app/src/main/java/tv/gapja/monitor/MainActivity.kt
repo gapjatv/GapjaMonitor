@@ -711,7 +711,12 @@ class MainActivity : AppCompatActivity() {
 
         val order = Bus.activated
         val sb = StringBuilder()
-        sb.append(if (Bus.running) "● 감시 중" else "○ 멈춤").append("   ")
+        sb.append(when {
+            !Bus.running -> "○ 멈춤"
+            Bus.paused -> "⏸ 일시정지 (게임 위 [보스설정 → 재개])"
+            Bus.lobby -> "● 감시 중 · 로비"
+            else -> "● 감시 중"
+        }).append("   ")
         sb.append(mode.label).append(" 모드 · ").append(PcDefaults.speedLabel(mode, Prefs.speedLock(this))).append('\n')
         sb.append("감시 영역: 폰 전체 화면 (자동)\n")
         if (order.isEmpty()) {
