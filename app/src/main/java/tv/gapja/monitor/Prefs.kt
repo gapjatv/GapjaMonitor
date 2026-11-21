@@ -220,6 +220,12 @@ object Prefs {
     fun setSpeedLock(ctx: Context, on: Boolean) =
         sp(ctx).edit().putBoolean("speed_lock", on).apply()
 
+    /** 로비·모드 전환 글자를 게임 화면에 띄울지 (기본 끔 — 반복 표시 문제 테스트용, v2.0) */
+    fun lobbyNotice(ctx: Context): Boolean = sp(ctx).getBoolean("lobby_notice", false)
+
+    fun setLobbyNotice(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean("lobby_notice", on).apply()
+
     /** 위험 경보 사용 */
     fun warningEnabled(ctx: Context): Boolean = sp(ctx).getBoolean("warn_on", true)
 

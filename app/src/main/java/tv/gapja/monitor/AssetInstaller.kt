@@ -28,8 +28,9 @@ object AssetInstaller {
      * 자료를 바꿔서 새로 넣을 때 올린다
      *   2: 로비 3종·배속 사진·경보음·경보 멘트 추가
      *   3: 핸드폰 기본 사진 15장 (github.com/gapjatv/png, 2026-11-21)
+     *   4: 윔 경보음(alarms/윔.mp3) 추가, 핸드폰 기본 사진 고기슬라임·블랑카·침공로비 교체 (2026-11-21 19:35)
      */
-    private const val VERSION = 3
+    private const val VERSION = 4
 
     private val FOLDERS = listOf("templates", "display", "voices", "alarms")
 

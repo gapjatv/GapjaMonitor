@@ -574,30 +574,73 @@ class CaptureService : Service() {
     /** 로비 오인식 확인용 화면 저장 간격 */
     private var lastLobbyShotAt = 0L
 
+    /** 로비 사진 한 종류의 최고 점수 (기준을 넘은 사진만, 없으면 null) */
+    private data class LobbyHit(val lobby: String, val mode: GameMode?, val score: Double, val file: String)
+
+    private fun scoreLobby(scr: Mat, lobby: String, lobbyMode: GameMode?): LobbyHit? {
+        var hit: LobbyHit? = null
+        for (fn in templates.lobbyShots(lobby)) {
+            // 내 사진은 '새로 등록/기본 사진' 설정과 상관없이 항상 쓴다
+            val t = (if (templates.isUser(fn)) templates.get(fn) else templates.getUsable(fn)) ?: continue
+            // 이 기기에서 찍은 로비 사진은 높은 기준, PC 사진은 기준값 + 윤곽선 검사
+            val phone = templates.isPhoneShot(fn)
+            val th = if (phone) PcDefaults.LOBBY_THRESHOLD_PHONE else PcDefaults.LOBBY_THRESHOLD
+            val r = matcher.multiScale(scr, t, th, downscale = downscale)
+            if (r.score < th) continue
+            if (!phone && matcher.verifyEdge(scr, t, r.x, r.y, r.w, r.h) < PcDefaults.LOBBY_MIN_EDGE) continue
+            // 첫 번째로 넘은 사진에서 멈추지 않고, 그 로비 사진들 중 가장 높은 점수를 쓴다
+            if (hit == null || r.score > hit.score) hit = LobbyHit(lobby, lobbyMode, r.score, fn)
+        }
+        return hit
+    }
+
+    /** 마지막 로비 판정 로그 시각 (같은 내용이 계속 쌓이지 않게) */
+    private var lastLobbyAmbigLog = 0L
+
     private fun checkLobby(scr: Mat, now: Long): Boolean {
-        for ((lobby, lobbyMode) in listOf(
-            PcDefaults.LOBBY_NORMAL to GameMode.NORMAL,
-            PcDefaults.LOBBY_INVASION to GameMode.INVASION,
-            PcDefaults.LOBBY_COMMON to null
-        )) {
-            var best = 0.0
-            var bestFile: String? = null
-            for (fn in templates.lobbyShots(lobby)) {
-                val t = templates.getUsable(fn) ?: continue
-                // 이 기기에서 찍은 로비 사진은 높은 기준, PC 사진은 기준값 + 윤곽선 검사
-                val phone = templates.isPhoneShot(fn)
-                val th = if (phone) PcDefaults.LOBBY_THRESHOLD_PHONE else PcDefaults.LOBBY_THRESHOLD
-                val r = matcher.multiScale(scr, t, th, downscale = downscale)
-                if (r.score < th) continue
-                if (!phone && matcher.verifyEdge(scr, t, r.x, r.y, r.w, r.h) < PcDefaults.LOBBY_MIN_EDGE) continue
-                best = r.score; bestFile = fn
-                break
+        // ── v2.0: 로비 3종을 모두 재고, 가장 높은 것을 고른다 ──
+        // 예전에는 태초로비 → 침공로비 순서로 '먼저 기준을 넘은 것' 을 골랐다.
+        // 핸드폰 태초로비와 침공로비 화면은 배치가 똑같고 색만 달라서(인식은 회색조)
+        // 태초로비 사진이 침공로비 화면에도 75~78% 로 맞는다 (기준 72%).
+        // 그래서 침공로비에서 화면이 조금씩 움직일 때마다 태초/침공이 번갈아 골라져
+        // "태초모드 > 침공모드 전환" 이 계속 반복됐다.
+        val hits = listOfNotNull(
+            scoreLobby(scr, PcDefaults.LOBBY_NORMAL, GameMode.NORMAL),
+            scoreLobby(scr, PcDefaults.LOBBY_INVASION, GameMode.INVASION),
+            scoreLobby(scr, PcDefaults.LOBBY_COMMON, null)
+        )
+        val top = hits.maxByOrNull { it.score }
+        if (top != null) {
+            val lobby = top.lobby
+            var lobbyMode = top.mode
+            val best = top.score
+            val bestFile = top.file
+
+            // 태초로비·침공로비가 둘 다 맞았는데 점수 차이가 작으면 어느 쪽인지 믿지 않는다
+            // → 로비로는 보되(보스 초기화는 함), 모드는 바꾸지 않는다
+            if (lobbyMode != null) {
+                val other = hits.firstOrNull { it.mode != null && it.mode != lobbyMode }
+                if (other != null && best - other.score < PcDefaults.LOBBY_MODE_MARGIN) {
+                    if (now - lastLobbyAmbigLog > 10_000) {
+                        lastLobbyAmbigLog = now
+                        Bus.log("🤔 [로비 판정 보류] 태초로비 ${pct(hits.first { it.mode == GameMode.NORMAL }.score)} · " +
+                                "침공로비 ${pct(hits.first { it.mode == GameMode.INVASION }.score)} — " +
+                                "차이가 ${pct(PcDefaults.LOBBY_MODE_MARGIN)} 보다 작아 모드는 그대로 둡니다. " +
+                                "(그 기기에서 로비 사진을 직접 등록하면 확실해집니다)")
+                    }
+                    lobbyMode = null
+                }
             }
-            if (bestFile == null) continue
 
             // 연달아 보여야 로비 — 한 번만 맞은 것은 아직 믿지 않는다
-            if (lobbyCandidate == lobby) lobbyCandHits++ else { lobbyCandidate = lobby; lobbyCandHits = 1 }
+            // 후보는 '어떤 모드의 로비인지' 로 센다 (보류된 판정은 모드 없음으로 센다)
+            val candKey = lobbyMode?.key ?: "keep"
+            if (lobbyCandidate == candKey) lobbyCandHits++ else { lobbyCandidate = candKey; lobbyCandHits = 1 }
             if (!inLobby && lobbyCandHits < PcDefaults.LOBBY_CONFIRM_HITS) return false
+            // 이미 로비에 있는 동안 모드를 바꾸려면 더 여러 번 연달아 같은 쪽이 나와야 한다
+            if (lobbyMode != null && lobbyMode != session.mode && lobbyCandHits < PcDefaults.LOBBY_MODE_SWITCH_HITS) {
+                lobbyMode = null
+            }
 
             val entering = !inLobby
             val label = PcDefaults.lobbyLabel(lobby)
@@ -617,10 +660,12 @@ class CaptureService : Service() {
                 val head = when {
                     modeChanged -> (if (newMode == GameMode.INVASION) "🔥 " else "🟢 ") +
                             "${oldMode.label}모드 > ${newMode.label}모드 전환"
-                    lobbyMode == null -> "🏁 $label 인식"
+                    top.mode == null -> "🏁 $label 인식"
+                    lobbyMode == null -> "🏠 로비 인식"
                     else -> "🏠 $label 인식"
                 }
-                Bus.notice(if (willReset) "$head\n보스 사진 초기화" else head)
+                // 로비·모드 전환 글자는 메인 화면 스위치로 켜고 끈다 (기본 끄기, v2.0)
+                if (Prefs.lobbyNotice(this)) Bus.notice(if (willReset) "$head\n보스 사진 초기화" else head)
             }
             // 자르기 화면에서 막 돌아온 직후(15초)에는 로비가 잠깐 보여도 보스를 지우지 않는다
             // (게임이 다시 접속하면서 로비를 잠깐 보여 주는 경우가 있어서)
@@ -633,8 +678,10 @@ class CaptureService : Service() {
             }
             graceLogged = false
             if (session.activationOrder.isNotEmpty()) {
-                Bus.log((if (lobbyMode == null)
+                Bus.log((if (top.mode == null)
                     "🏁 [$label(공통로비) 인식 → ${newMode.label} 모드 유지] 보스 사진을 초기화합니다."
+                else if (lobbyMode == null)
+                    "🏠 [로비 인식 → ${newMode.label} 모드 유지(판정 보류)] 보스 사진을 초기화합니다."
                 else
                     "🏠 [$lobby 귀환 → ${newMode.label} 모드] 보스 사진을 초기화합니다.") +
                         " (사진 '${bestFile.removeSuffix(".png")}', 정확도 ${pct(best)}, " +

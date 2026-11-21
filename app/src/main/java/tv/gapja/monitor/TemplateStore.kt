@@ -80,9 +80,45 @@ class TemplateStore(private val ctx: Context) {
 
     fun getUsable(fileName: String): Mat? = if (usable(fileName)) get(fileName) else null
 
-    /** 로비 화면 사진들 (기본 + 보조) 중 쓸 수 있는 것 */
-    fun lobbyShots(lobby: String): List<String> =
-        (listOf("$lobby.png") + extraShots(lobby)).filter { usable(it) }
+    // ── 내가 등록한 사진 최우선 (v2.0) ─────────────────────────
+    //  그 보스(또는 로비)에 내가 직접 등록한 사진이 하나라도 있으면 내 사진만 쓰고,
+    //  앱에 들어 있던 기본 사진(핸드폰 기본·PC 사진)은 인식에서 뺀다.
+    //  기본 사진 파일은 지우지 않고 남겨 둔다 → 내 사진을 지우면 기본 사진이 다시 쓰인다.
+
+    /** 그 이름(`그런트` 또는 `침공_그런트`)으로 내가 등록한 사진들 — 기본 자리 먼저, 그다음 보조 */
+    fun userShots(base: String): List<String> =
+        (listOf("$base.png") + BossCatalog.EXTRA_SHOT_SUFFIXES.map { "$base$it.png" })
+            .filter { isUser(it) && File(dir, it).exists() }
+
+    /**
+     * 그 보스 인식에 쓸 내 사진 묶음 — 없으면 빈 목록.
+     * 침공: 침공_ 내 사진 → (없으면) 태초 내 사진. 태초: 태초 내 사진.
+     */
+    fun userShotsFor(name: String, mode: GameMode): List<String> {
+        if (PcDefaults.isLobby(name)) return userShots(name)
+        if (mode == GameMode.INVASION) {
+            val inv = userShots("${INVASION_PREFIX}$name")
+            if (inv.isNotEmpty()) return inv
+        }
+        return userShots(name)
+    }
+
+    /** 앱 기본 사진인데 같은 보스(로비)에 내 사진이 있어서 인식에서 빠진 사진인지 — 사진 보기 화면 표시용 */
+    fun shadowedByUser(fileName: String): Boolean {
+        if (isUser(fileName) || fileName.contains("배속상태")) return false
+        val stem = fileName.removeSuffix(".png").replace(Regex("_[2-9]$"), "")
+        if (PcDefaults.isLobby(stem)) return userShots(stem).isNotEmpty()
+        return if (stem.startsWith(INVASION_PREFIX))
+            userShotsFor(stem.removePrefix(INVASION_PREFIX), GameMode.INVASION).isNotEmpty()
+        else userShots(stem).isNotEmpty()
+    }
+
+    /** 로비 화면 사진들 — 내 사진이 있으면 내 사진만, 없으면 기본 + 보조 중 쓸 수 있는 것 */
+    fun lobbyShots(lobby: String): List<String> {
+        val mine = userShots(lobby)
+        if (mine.isNotEmpty()) return mine
+        return (listOf("$lobby.png") + extraShots(lobby)).filter { usable(it) }
+    }
 
     /** 그 보스(또는 로비)에 내가 등록한 사진이 하나라도 있는지 — 등록 도우미용 */
     fun hasUserShot(name: String, mode: GameMode): Boolean {
@@ -148,6 +184,8 @@ class TemplateStore(private val ctx: Context) {
 
     /** 그 보스 인식에 쓰는 기본 사진 파일 이름 (없으면 null) */
     fun forBossFile(name: String, mode: GameMode): String? {
+        // 내가 등록한 사진이 있으면 그중 첫 장이 기본 사진 (기본 자리 → 보조 순서)
+        userShotsFor(name, mode).firstOrNull { get(it) != null }?.let { return it }
         val inv = "${INVASION_PREFIX}$name.png"
         if (mode == GameMode.INVASION && usable(inv) && get(inv) != null) return inv
         val base = "$name.png"
@@ -162,6 +200,12 @@ class TemplateStore(private val ctx: Context) {
 
     /** 모드에 맞는 보조 스샷 — 침공이면 '침공_' 보조 스샷도 함께 */
     fun extraShots(name: String, mode: GameMode): List<String> {
+        // 내 사진이 있으면 기본 사진으로 고른 첫 장을 뺀 나머지 내 사진만 보조로 쓴다
+        val mine = userShotsFor(name, mode)
+        if (mine.isNotEmpty()) {
+            val primary = forBossFile(name, mode)
+            return mine.filter { it != primary }
+        }
         val inv = if (mode == GameMode.INVASION) extraShots("${INVASION_PREFIX}$name") else emptyList()
         return (inv + extraShots(name)).filter { usable(it) }
     }
@@ -173,6 +217,7 @@ class TemplateStore(private val ctx: Context) {
     /** 그 모드에서 인식할 수 있는 보스 */
     fun availableBosses(all: List<String>, mode: GameMode): List<String> =
         all.filter {
+            userShotsFor(it, mode).isNotEmpty() ||
             usable("$it.png") || extraShots(it, mode).isNotEmpty() ||
                     (mode == GameMode.INVASION && usable("${INVASION_PREFIX}$it.png"))
         }

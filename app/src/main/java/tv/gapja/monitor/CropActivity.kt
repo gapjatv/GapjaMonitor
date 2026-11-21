@@ -285,12 +285,13 @@ class CropActivity : AppCompatActivity() {
         preview.setImageBitmap(currentCrop())
     }
 
-    /** 저장할 파일 이름을 정한다 — 처음이면 기본 사진, 이미 이 기기 사진이 있으면 보조 사진 */
+    /** 저장할 파일 이름을 정한다 — 처음이면 기본 사진 자리, 이미 내가 등록한 사진이 있으면 보조 사진 */
     private fun planSave(store: TemplateStore, boss: String): Boolean {
         val base = if (mode == GameMode.INVASION && !PcDefaults.isLobby(boss))
             "${TemplateStore.INVASION_PREFIX}$boss.png" else "$boss.png"
-        // 없거나 PC 사진이면 기본 사진 자리에 (PC 사진은 보관해 두어 되돌릴 수 있다)
-        return store.exists(base) && store.isPhoneShot(base)
+        // 없거나 앱 기본 사진(핸드폰 기본·PC)이면 기본 사진 자리에 넣는다 (기본 사진은 보관해 두어 되돌릴 수 있다)
+        // 내 사진이 생기면 그 보스의 기본 사진은 인식에서 빠진다 (TemplateStore.userShotsFor)
+        return store.exists(base) && store.isUser(base)
     }
 
     private fun save() {

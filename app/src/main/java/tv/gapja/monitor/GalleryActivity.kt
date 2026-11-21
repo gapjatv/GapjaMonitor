@@ -48,7 +48,8 @@ class GalleryActivity : AppCompatActivity() {
         val store = TemplateStore(this)
         col.addView(TextView(this).apply {
             text = if (Prefs.usePcTemplates(this@GalleryActivity))
-                "지금은 기본 사진을 함께 쓰는 중입니다. 아래 ✔ 는 직접 등록한 사진이 있는 항목이에요."
+                "지금은 기본 사진을 함께 쓰는 중입니다. 아래 ✔ 는 직접 등록한 사진이 있는 항목이에요. " +
+                        "✔ 항목은 내 사진만 쓰고 그 보스의 기본 사진은 쓰지 않습니다."
             else "지금은 직접 등록한 사진만 씁니다. ○ 인 항목은 아직 인식되지 않으니 [보스설정 → 캡처] 로 등록해 주세요."
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
             setPadding(0, dp(6), 0, 0)
@@ -139,9 +140,16 @@ class GalleryActivity : AppCompatActivity() {
             }
             box.addView(iv, LinearLayout.LayoutParams(itemW - dp(8), if (round) itemW - dp(8) else (itemW * 0.7f).toInt()))
             val mine = f.name in Prefs.userTemplates(this)
+            // 내 사진이 있는 보스의 기본 사진은 인식에 쓰지 않는다 — 흐리게 + '사용 안 함' 표시
+            val shadowed = f.parentFile?.name == "templates" && !mine && TemplateStore(this).shadowedByUser(f.name)
+            if (shadowed) iv.alpha = 0.35f
             box.addView(TextView(this).apply {
-                text = f.name.removeSuffix(".png") + if (mine) "\n✔ 내 사진" else ""
-                setTextColor(Color.parseColor("#FFD5DEE6")); textSize = 11f
+                text = f.name.removeSuffix(".png") + when {
+                    mine -> "\n✔ 내 사진"
+                    shadowed -> "\n⛔ 사용 안 함 (내 사진 우선)"
+                    else -> ""
+                }
+                setTextColor(Color.parseColor(if (shadowed) "#FF7F8C8D" else "#FFD5DEE6")); textSize = 11f
                 gravity = Gravity.CENTER
                 maxLines = 2
             })

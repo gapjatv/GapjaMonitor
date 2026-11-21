@@ -106,6 +106,15 @@ object PcDefaults {
     /** 로비가 이만큼 연달아(약 0.6초 간격) 보여야 진짜 로비로 본다 */
     const val LOBBY_CONFIRM_HITS = 2
 
+    /**
+     * 태초로비·침공로비가 둘 다 맞을 때, 높은 쪽이 이만큼 앞서야 그 모드로 본다.
+     * (핸드폰 기본 사진끼리는 서로의 화면에 75~78% 로 맞고, 제 화면에는 90% 이상 나온다)
+     */
+    const val LOBBY_MODE_MARGIN = 0.06
+
+    /** 로비에 있는 동안 모드를 바꾸려면 같은 쪽이 이만큼 연달아(약 0.6초 간격) 나와야 한다 */
+    const val LOBBY_MODE_SWITCH_HITS = 3
+
     /** 화면 알림·기록에 쓰는 로비 이름 (공통로비 = 판이 끝난 '종료!' 화면) */
     fun lobbyLabel(lobby: String): String = if (lobby == LOBBY_COMMON) "종료 화면" else lobby
 

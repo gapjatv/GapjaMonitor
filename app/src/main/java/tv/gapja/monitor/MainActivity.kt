@@ -421,6 +421,12 @@ class MainActivity : AppCompatActivity() {
         }
         col.addView(modeBtn)
         col.addView(body("누르면 태초 ⇄ 침공. 감시 중 로비 화면이 보이면 자동으로 바뀝니다."))
+        col.addView(check("로비·모드 전환 글자 표시  (게임 화면 위 '🏠 태초로비 인식', '태초모드 > 침공모드 전환' 등 · 기본 끔)",
+            Prefs.lobbyNotice(this)) {
+            Prefs.setLobbyNotice(this, it)
+            Bus.log(if (it) "🏠 [로비 글자] 로비·모드 전환 글자를 게임 화면에 보여 줍니다."
+                    else "🏠 [로비 글자] 로비·모드 전환 글자를 끕니다. (인식·모드 전환·초기화는 그대로)")
+        })
         val speedBtn = btn("", "#16A085") {}
         fun syncSpeed() {
             val locked = Prefs.speedLock(this)
