@@ -57,8 +57,10 @@ class BossA11yService : AccessibilityService() {
                 if (w.type != android.view.accessibility.AccessibilityWindowInfo.TYPE_APPLICATION) continue
                 val pkg = try { w.root?.packageName?.toString() } catch (_: Exception) { null }
                 val title = w.title?.toString() ?: ""
+                // 우리 앱 창은 절대 게임으로 보지 않는다
+                if (pkg == packageName || title.contains(getString(R.string.app_name))) continue
                 val byPkg = pkg != null && isGame(pkg)
-                val byTitle = GAME_KEYWORDS.any { title.contains(it, ignoreCase = true) }
+                val byTitle = pkg == null && GAME_KEYWORDS.any { title.contains(it, ignoreCase = true) }
                 if (byPkg || byTitle) {
                     setGame(disp, pkg ?: gamePackage ?: title)
                     return true
@@ -110,7 +112,9 @@ class BossA11yService : AccessibilityService() {
     private fun isGame(pkg: String): Boolean {
         if (pkg == packageName) return false
         val saved = Prefs.gamePackage(this)
-        if (saved != null) return pkg == saved
+        // 예전 버전이 잘못 기억한 값(우리 앱)이면 버린다
+        if (saved == packageName) Prefs.setGamePackage(this, null)
+        else if (saved != null) return pkg == saved
         val label = labelOf(pkg)
         if (GAME_KEYWORDS.any { label.contains(it, ignoreCase = true) }) {
             Prefs.setGamePackage(this, pkg)
@@ -160,8 +164,12 @@ class BossA11yService : AccessibilityService() {
     companion object {
         private const val TAG = "BossA11y"
 
-        /** 게임 앱 이름에 들어 있는 말 (운빨존많겜 / Lucky Defense) */
-        private val GAME_KEYWORDS = listOf("운빨", "Lucky Defense")
+        /**
+         * 게임 앱 이름에 들어 있는 말 (운빨존많겜 / Lucky Defense).
+         * ⚠️ '운빨' 만으로 찾으면 우리 앱(운빨보스알림)도 걸려서, 버튼이 게임 탭과 우리 탭 사이를
+         *    왔다 갔다 하며 사라지는 문제가 있었다 → '운빨존많' 처럼 게임 이름으로만 찾는다.
+         */
+        private val GAME_KEYWORDS = listOf("운빨존많", "Lucky Defense", "LuckyDefense")
 
         /** 게임 창이 있는 화면 번호 (뮤뮤 탭마다 다르다. 폰은 0) */
         @Volatile var gameDisplay: Int = Display.DEFAULT_DISPLAY

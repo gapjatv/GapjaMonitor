@@ -57,6 +57,32 @@ class MainActivity : AppCompatActivity() {
     private var a11yBtn: Button? = null
     private var a11yOnBtn: Button? = null
     private var findGameBtn: Button? = null
+    private var diagBtn: Button? = null
+
+    /**
+     * 화면(디스플레이) 진단 — 뮤뮤처럼 탭마다 화면이 따로인 환경에서
+     * 게임이 몇 번 화면에 있고 보스 사진이 몇 번 화면에 붙었는지 로그에 남긴다.
+     */
+    private fun diagnoseDisplays() {
+        Bus.log("🖥 ── 화면 진단 ──")
+        try {
+            val dm = getSystemService(android.hardware.display.DisplayManager::class.java)
+            for (d in dm.displays) {
+                val f = d.flags
+                val tags = buildList {
+                    if (f and android.view.Display.FLAG_PRIVATE != 0) add("비공개")
+                    if (f and android.view.Display.FLAG_SECURE != 0) add("보안")
+                    if (f and android.view.Display.FLAG_PRESENTATION != 0) add("프레젠테이션")
+                }.joinToString(",").ifEmpty { "일반" }
+                val m = android.util.DisplayMetrics().also { @Suppress("DEPRECATION") d.getRealMetrics(it) }
+                Bus.log("   화면 #${d.displayId} '${d.name}' ${m.widthPixels}×${m.heightPixels} [$tags]")
+            }
+        } catch (e: Exception) { Bus.log("   화면 목록을 읽지 못했습니다: ${e.message}") }
+        Bus.log("   접근성: ${if (BossA11yService.instance != null) "켜짐" else "꺼짐"} · " +
+                "게임: ${Bus.gameLabel ?: "못 찾음"} (화면 #${Bus.gameDisplay}) · " +
+                "보스 사진 표시: 화면 #${Bus.overlayDisplay} · 저장된 게임 앱: ${Prefs.gamePackage(this) ?: "없음"}")
+        BossA11yService.instance?.findGame()
+    }
     private var addBtn: Button? = null
     private var addWhereBtn: Button? = null
     private var sourceBtn: Button? = null
@@ -382,6 +408,7 @@ class MainActivity : AppCompatActivity() {
             refresh()
         }
         col.addView(findGameBtn)
+        col.addView(btn("🖥 화면 진단 (안 보일 때 로그로 확인)", "#2A3644") { diagnoseDisplays() }.also { diagBtn = it })
 
         // ── 모드 · 배속 (PC판처럼 버튼 하나씩) ──
         col.addView(h("모드 · 배속"))
@@ -862,7 +889,8 @@ class MainActivity : AppCompatActivity() {
         else if (a11yOn)
             "♿ 접근성 — 켜져 있음 ✔. 확인창 없이 바로 시작합니다. (약 0.4초마다 확인)\n" +
             "감시 화면: " + (Bus.gameLabel?.let { "$it (화면 #${Bus.gameDisplay})" }
-                ?: "게임을 켜면 자동으로 찾아서 그 화면(뮤뮤 탭)에 보스 사진을 띄웁니다")
+                ?: "게임을 켜면 자동으로 찾아서 그 화면(뮤뮤 탭)에 보스 사진을 띄웁니다") +
+            (if (Bus.overlayDisplay >= 0) " · 보스 사진 표시: 화면 #${Bus.overlayDisplay}" else "")
         else
             "♿ 접근성 — 아직 꺼져 있음. 아래 [접근성 켜러 가기] 로 한 번만 켜 주세요."
         val gal = Prefs.pickFromGallery(this)

@@ -80,16 +80,18 @@ class OverlayService : Service() {
     /** 지금 오버레이가 붙어 있는 화면 번호 */
     private var shownDisplay = -1
 
+    /** 창 붙이기에 실패했는지 (실패하면 다른 방법으로 다시 시도) */
+    private var addFailed = false
+    private var lastAddError = ""
+
     override fun onCreate() {
         super.onCreate()
         if (!Prefs.overlayEnabled(this)) { stopSelf(); return }
-        if (!pickWindowManager(Bus.gameDisplay)) {
-            Bus.log("⚠️ 오버레이 권한이 없어 화면 위 표시를 건너뜁니다. " +
-                    "(메인 화면의 '오버레이 권한' 버튼으로 허용할 수 있습니다)")
+        if (!attachTo(Bus.gameDisplay)) {
+            Bus.log("⚠️ 화면 위에 띄울 방법이 없습니다. 메인 화면에서 '접근성' 을 켜거나 " +
+                    "'다른 앱 위에 표시' 를 허용해 주세요.")
             stopSelf(); return
         }
-        buildStrip()
-        buildChip()
         Bus.addChangeListener(listener)
         Bus.onCropOpened = { hideLoading() }
         // 게임이 다른 화면(뮤뮤 탭)으로 옮겨 가면 오버레이도 따라간다
@@ -104,9 +106,9 @@ class OverlayService : Service() {
      *   • 아니면: 일반 오버레이(다른 앱 위에 표시) 로 기본 화면에 띄운다.
      * @return 띄울 수 있으면 true
      */
-    private fun pickWindowManager(display: Int): Boolean {
+    private fun pickWindowManager(display: Int, allowA11y: Boolean = true, allowAppOnDisplay: Boolean = true): Boolean {
         val svc = BossA11yService.instance
-        if (svc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+        if (allowA11y && svc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
             try {
                 val dm = svc.getSystemService(android.hardware.display.DisplayManager::class.java)
                 val disp = dm.getDisplay(display) ?: dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
@@ -122,6 +124,23 @@ class OverlayService : Service() {
             }
         }
         if (!canDraw(this)) return false
+        // 일반 오버레이를 게임 화면에 (접근성 창이 막혔을 때의 예비 방법)
+        if (allowAppOnDisplay && display != android.view.Display.DEFAULT_DISPLAY &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val dm = getSystemService(android.hardware.display.DisplayManager::class.java)
+                val disp = dm.getDisplay(display)
+                if (disp != null) {
+                    val wctx = createDisplayContext(disp)
+                        .createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null)
+                    uiCtx = wctx
+                    wm = wctx.getSystemService(WindowManager::class.java)
+                    useA11yWin = false
+                    shownDisplay = display
+                    return true
+                }
+            } catch (_: Exception) {}
+        }
         uiCtx = this
         wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         useA11yWin = false
@@ -129,20 +148,49 @@ class OverlayService : Service() {
         return true
     }
 
-    /** 게임이 있는 화면으로 오버레이를 옮긴다 (창을 떼었다가 그 화면에 다시 붙인다) */
-    private fun moveToDisplay(display: Int) {
-        if (display == shownDisplay && (useA11yWin || BossA11yService.instance == null)) return
+    /**
+     * 화면에 사진 줄·버튼을 붙인다. 안 되면 다음 방법으로 차례로 시도한다.
+     *   ① 접근성 창 → 게임 화면   ② 일반 오버레이 → 게임 화면   ③ 일반 오버레이 → 기본 화면
+     */
+    private fun attachTo(display: Int): Boolean {
+        val tries = listOf(
+            Triple("접근성 창", true, true),
+            Triple("일반 오버레이(게임 화면)", false, true),
+            Triple("일반 오버레이(기본 화면)", false, false)
+        )
+        for ((name, a11y, appOnDisplay) in tries) {
+            removeAllWindows()
+            if (!pickWindowManager(display, allowA11y = a11y, allowAppOnDisplay = appOnDisplay)) continue
+            addFailed = false; lastAddError = ""
+            chipScaleApplied = -1
+            buildStrip()
+            buildChip()
+            if (!addFailed) {
+                Bus.overlayDisplay = shownDisplay
+                if (display != android.view.Display.DEFAULT_DISPLAY || shownDisplay != display)
+                    Bus.log("🪟 보스 사진·[보스설정] → 화면 #$shownDisplay ($name)" +
+                            if (shownDisplay != display) " — 게임 화면 #$display 에는 붙지 않았습니다" else "")
+                render()
+                return true
+            }
+            Bus.log("⚠️ [$name] 화면 #$shownDisplay 에 붙이기 실패: $lastAddError")
+        }
+        return false
+    }
+
+    /** 붙어 있는 창을 모두 뗀다 */
+    private fun removeAllWindows() {
         if (editing) { editing = false; hidePanel() }
         hideLoading()
         try { strip?.let { wm?.removeView(it) } } catch (_: Exception) {}
         try { chip?.let { wm?.removeView(it) } } catch (_: Exception) {}
         strip = null; chip = null
-        chipScaleApplied = -1
-        if (!pickWindowManager(display)) { stopSelf(); return }
-        buildStrip()
-        buildChip()
-        render()
-        Bus.log("🪟 보스 사진·[보스설정] 을 화면 #$shownDisplay 에 띄웠습니다.")
+    }
+
+    /** 게임이 있는 화면으로 오버레이를 옮긴다 (창을 떼었다가 그 화면에 다시 붙인다) */
+    private fun moveToDisplay(display: Int) {
+        if (display == shownDisplay) return
+        if (!attachTo(display)) stopSelf()
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
@@ -232,8 +280,9 @@ class OverlayService : Service() {
         try {
             wm?.addView(v, stripLp)
         } catch (e: Exception) {
-            Bus.log("⚠️ 오버레이를 띄우지 못했습니다: ${e.message}")
-            stopSelf()
+            // 여기서 서비스를 끝내지 않는다 — 다른 방법(다른 창 종류·기본 화면)으로 다시 시도한다
+            addFailed = true
+            lastAddError = "${e.javaClass.simpleName}: ${e.message}"
         }
     }
 
@@ -404,7 +453,10 @@ class OverlayService : Service() {
                 else -> false
             }
         }
-        try { wm?.addView(box, chipLp) } catch (_: Exception) {}
+        try { wm?.addView(box, chipLp) } catch (e: Exception) {
+            addFailed = true
+            lastAddError = "${e.javaClass.simpleName}: ${e.message}"
+        }
         wakeChip()
     }
 

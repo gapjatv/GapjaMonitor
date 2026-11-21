@@ -50,6 +50,9 @@ object Bus {
     @Volatile var gameDisplay: Int = 0
     @Volatile var gameLabel: String? = null
 
+    /** 오버레이(보스 사진·버튼)가 지금 붙어 있는 화면 번호 */
+    @Volatile var overlayDisplay: Int = -1
+
     /** 게임 화면이 바뀌면 오버레이를 그 화면으로 옮긴다 */
     var onGameDisplay: ((Int) -> Unit)? = null
 
