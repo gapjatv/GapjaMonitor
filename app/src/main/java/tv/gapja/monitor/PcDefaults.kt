@@ -94,6 +94,21 @@ object PcDefaults {
     /** PC MATCH_THRESHOLD — 로비 화면 인식 기준 */
     const val LOBBY_THRESHOLD = 0.60
 
+    /**
+     * 이 기기에서 찍은 로비 사진의 기준값 — 크기가 정확히 맞아 진짜 로비에서는 90% 가까이 나온다.
+     * 그래서 높게 잡아 게임 화면을 로비로 착각하지 않게 한다.
+     */
+    const val LOBBY_THRESHOLD_PHONE = 0.72
+
+    /** PC 로비 사진은 윤곽선까지 이만큼 맞아야 로비로 본다 (폰 화면에서 엉뚱한 곳에 걸리지 않게) */
+    const val LOBBY_MIN_EDGE = 0.35
+
+    /** 로비가 이만큼 연달아(약 0.6초 간격) 보여야 진짜 로비로 본다 */
+    const val LOBBY_CONFIRM_HITS = 2
+
+    /** 화면 알림·기록에 쓰는 로비 이름 (공통로비 = 판이 끝난 '종료!' 화면) */
+    fun lobbyLabel(lobby: String): String = if (lobby == LOBBY_COMMON) "종료 화면" else lobby
+
     // ── 배속 인식 (배속 고정을 끈 경우만) ───────────────────────
 
     /** PC SPEED_MATCH_THRESHOLD / SPEED_MATCH_MARGIN */

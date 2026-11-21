@@ -328,6 +328,19 @@ object Prefs {
 
     fun setPowerSave(ctx: Context, on: Boolean) = sp(ctx).edit().putBoolean("power_save", on).apply()
 
+    /**
+     * 자르기 네모의 위치·크기와 확대 배율을 기억한다 (보스 / 로비, 세로 / 가로 따로).
+     * 값: "왼,위,오른,아래,배율" (사진 크기에 대한 0~1 비율)
+     */
+    fun cropBox(ctx: Context, key: String): FloatArray? {
+        val v = sp(ctx).getString("crop_box_$key", null) ?: return null
+        val a = v.split(',').mapNotNull { it.toFloatOrNull() }
+        return if (a.size == 5) a.toFloatArray() else null
+    }
+
+    fun setCropBox(ctx: Context, key: String, v: FloatArray) =
+        sp(ctx).edit().putString("crop_box_$key", v.joinToString(",")).apply()
+
     /** [사진 추가] 를 누르면 사진첩에서 고를지(기본) 파일에서 고를지 */
     fun pickFromGallery(ctx: Context): Boolean = sp(ctx).getBoolean("pick_gallery", true)
 

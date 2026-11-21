@@ -49,15 +49,14 @@ class CropActivity : AppCompatActivity() {
     private lateinit var bossSpinner: Spinner
     private lateinit var saveInfo: TextView
     private var mode = GameMode.INVASION
-    private var asExtra = true
     private var source: Bitmap? = null
+    /** 지금 네모가 어느 종류(보스/로비) 기억값으로 맞춰져 있는지 */
+    private var boxKind: String? = null
     private var zoomBar: SeekBar? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         mode = GameMode.from(intent.getStringExtra(EXTRA_MODE) ?: Prefs.mode(this))
-        // '새로 등록' 을 쓰는 중이면 보조 사진보다 기본 사진으로 저장하는 게 자연스럽다
-        asExtra = Prefs.usePcTemplates(this)
 
         source = loadSource()
         if (source == null) {
@@ -99,7 +98,8 @@ class CropActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
         })
         col.addView(TextView(this).apply {
-            text = "두 손가락으로 확대한 뒤, 주황 네모로 보스만 감싸세요. 모서리 점을 끌면 크기가 바뀝니다."
+            text = "두 손가락으로 확대한 뒤, 주황 네모로 보스만 감싸세요. 모서리 점을 끌면 크기가 바뀝니다.\n" +
+                    "지난번에 등록한 네모 위치·크기·확대를 기억해서 그대로 시작합니다."
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
         })
 
@@ -176,26 +176,20 @@ class CropActivity : AppCompatActivity() {
         })
         right.addView(bossSpinner)
         syncMode()
+        // 보스 ↔ 로비를 바꿔 고르면 그 종류의 기억한 네모로 바꾼다
+        bossSpinner.onItemSelectedListener = object : android.widget.AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(p: android.widget.AdapterView<*>?, v: View?, pos: Int, id: Long) { restoreBox() }
+            override fun onNothingSelected(p: android.widget.AdapterView<*>?) {}
+        }
         row.addView(right, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         col.addView(row)
 
-        // 저장 방식
-        val modeRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-        val extraBtn = Button(this); val baseBtn = Button(this)
-        saveInfo = TextView(this).apply { setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f }
-        fun sync() {
-            extraBtn.setBackgroundColor(Color.parseColor(if (asExtra) "#2980B9" else "#3C4B5A"))
-            baseBtn.setBackgroundColor(Color.parseColor(if (!asExtra) "#2980B9" else "#3C4B5A"))
-            saveInfo.text = if (asExtra) "→ 보조 사진으로 추가합니다 (기존 사진은 그대로)"
-            else "→ 기본 사진을 이 사진으로 바꿉니다"
+        // 저장 방식은 자동 — 처음이면 기본 사진, 이미 이 기기 사진이 있으면 보조 사진으로 추가 (기존 사진은 지키기)
+        saveInfo = TextView(this).apply {
+            setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
+            text = "보스(로비)를 고르고 [등록] 을 누르세요. 기존 사진은 지우지 않고 추가로 등록합니다."
+            setPadding(0, dp(6), 0, 0)
         }
-        for ((b, t, ex) in listOf(Triple(extraBtn, "보조 사진 추가", true), Triple(baseBtn, "기본 사진 교체", false))) {
-            b.text = t; b.setTextColor(Color.WHITE); b.isAllCaps = false
-            b.setOnClickListener { asExtra = ex; sync() }
-            modeRow.addView(b, LinearLayout.LayoutParams(0, dp(44), 1f).also { it.setMargins(dp(2), dp(6), dp(2), 0) })
-        }
-        sync()
-        col.addView(modeRow)
         col.addView(saveInfo)
 
         val btns = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
@@ -205,14 +199,38 @@ class CropActivity : AppCompatActivity() {
             setOnClickListener { finish() }
         }, LinearLayout.LayoutParams(0, dp(50), 1f).also { it.setMargins(dp(2), dp(8), dp(2), 0) })
         btns.addView(Button(this).apply {
-            text = "저장"; setTextColor(Color.WHITE); isAllCaps = false
+            text = "등록"; setTextColor(Color.WHITE); isAllCaps = false
             setBackgroundColor(Color.parseColor("#16A085"))
             setOnClickListener { save() }
         }, LinearLayout.LayoutParams(0, dp(50), 1f).also { it.setMargins(dp(2), dp(8), dp(2), 0) })
         col.addView(btns)
 
         updatePreview()
+        restoreBox()
         return col
+    }
+
+    // ── 네모 위치 기억 ──
+
+    private fun boxKey(target: String?): String {
+        val kind = if (target != null && PcDefaults.isLobby(target)) "lobby" else "boss"
+        val src = source
+        val land = src != null && src.width > src.height
+        return kind + if (land) "_land" else "_port"
+    }
+
+    /** 고른 항목 종류(보스/로비)에 맞는 기억한 네모로 맞춘다 (종류가 바뀔 때만) */
+    private fun restoreBox() {
+        val key = boxKey(bossSpinner.selectedItem as? String)
+        if (key == boxKind) return
+        boxKind = key
+        val v = Prefs.cropBox(this, key) ?: return
+        cropView.restore(RectF(v[0], v[1], v[2], v[3]), v[4])
+    }
+
+    private fun rememberBox(target: String) {
+        val (r, z) = cropView.state()
+        Prefs.setCropBox(this, boxKey(target), floatArrayOf(r.left, r.top, r.right, r.bottom, z))
     }
 
     /**
@@ -267,6 +285,14 @@ class CropActivity : AppCompatActivity() {
         preview.setImageBitmap(currentCrop())
     }
 
+    /** 저장할 파일 이름을 정한다 — 처음이면 기본 사진, 이미 이 기기 사진이 있으면 보조 사진 */
+    private fun planSave(store: TemplateStore, boss: String): Boolean {
+        val base = if (mode == GameMode.INVASION && !PcDefaults.isLobby(boss))
+            "${TemplateStore.INVASION_PREFIX}$boss.png" else "$boss.png"
+        // 없거나 PC 사진이면 기본 사진 자리에 (PC 사진은 보관해 두어 되돌릴 수 있다)
+        return store.exists(base) && store.isPhoneShot(base)
+    }
+
     private fun save() {
         val crop = currentCrop() ?: return
         if (crop.width < 16 || crop.height < 16) {
@@ -274,49 +300,42 @@ class CropActivity : AppCompatActivity() {
             return
         }
         val boss = bossSpinner.selectedItem as? String ?: return
-        // '기본 사진 교체' 인데 이미 사진이 있으면 한 번 더 묻는다 (잘못 눌러 원본을 덮지 않게)
-        if (!asExtra) {
-            val base = if (mode == GameMode.INVASION && !PcDefaults.isLobby(boss))
-                "${TemplateStore.INVASION_PREFIX}$boss.png" else "$boss.png"
-            if (TemplateStore(this).exists(base)) {
-                androidx.appcompat.app.AlertDialog.Builder(this)
-                    .setTitle("기본 사진을 바꿀까요?")
-                    .setMessage("'${base.removeSuffix(".png")}' 의 지금 사진을 이 사진으로 바꿉니다.\n\n" +
-                            "이전 사진은 보관해 두므로 '저장된 보스 사진 보기' 에서 그 사진을 길게 눌러 " +
-                            "'이전 사진으로 되돌리기' 로 복구할 수 있습니다.\n\n" +
-                            "기존 사진은 그대로 두고 추가만 하려면 '보조 사진 추가' 를 고르세요.")
-                    .setPositiveButton("바꾸기") { _, _ -> doSave(crop, boss) }
-                    .setNeutralButton("보조 사진으로 추가") { _, _ -> asExtra = true; doSave(crop, boss) }
-                    .setNegativeButton("취소", null)
-                    .show()
-                return
-            }
-        }
-        doSave(crop, boss)
+        val asExtra = planSave(TemplateStore(this), boss)
+        val what = if (PcDefaults.isLobby(boss)) boss else "$boss (${mode.label})"
+        // 물어보는 것은 한 번만: 등록 / 취소
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("등록할까요?")
+            .setMessage("'$what' 사진으로 등록합니다." +
+                    if (asExtra) "\n(이미 있는 사진은 그대로 두고 하나 더 추가합니다)" else "")
+            .setPositiveButton("등록") { _, _ -> doSave(crop, boss, asExtra) }
+            .setNegativeButton("취소", null)
+            .show()
     }
 
-    private fun doSave(crop: Bitmap, boss: String) {
+    private fun doSave(crop: Bitmap, boss: String, asExtra: Boolean) {
         val name = TemplateStore(this).saveCrop(normalized(crop), boss, mode, asExtra)
         if (name == null) {
             Toast.makeText(this, "저장하지 못했습니다", Toast.LENGTH_SHORT).show()
             return
         }
+        rememberBox(boss)
         Bus.log("✂️ [사진 등록] '$name' 저장 (${crop.width}×${crop.height}, ${mode.label}) — 바로 인식에 쓰입니다. " +
                 "사진첩 › 운빨보스알림 에도 넣었습니다.")
-        val fromSnap = intent.getStringExtra(EXTRA_PATH) != null
-        // 자르기 전 전체 화면도 사진첩에 남긴다 (캡처함에서 연 화면은 캡처할 때 이미 남겼다)
-        if (!fromSnap) source?.let { Backup.saveFullScreen(this, it, name.removeSuffix(".png")) }
-        Toast.makeText(this, "$name 저장했습니다", Toast.LENGTH_SHORT).show()
-        if (fromSnap) {
-            // 캡처함 화면 한 장에 보스가 여럿 있을 수 있으니 이어서 자를지 묻는다
-            androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("저장했습니다")
-                .setMessage("이 화면에서 다른 보스(로비)도 잘라 넣을까요?")
-                .setPositiveButton("더 자르기", null)
-                .setNegativeButton("끝내기") { _, _ -> finish() }
-                .setCancelable(false)
-                .show()
-        } else finish()
+        val snapPath = intent.getStringExtra(EXTRA_PATH)
+        val snap = snapPath?.let { java.io.File(it) }?.takeIf { it.parentFile?.name == "snaps" }
+        if (snap != null) {
+            // 캡처함에 '이 캡처에서 무엇을 등록했는지' 표시
+            Snaps.markRegistered(this, snap, name)
+        } else {
+            // 자르기 전 전체 화면도 사진첩에 남긴다 (캡처함에서 연 화면은 캡처할 때 이미 남겼다)
+            source?.let { Backup.saveFullScreen(this, it, name.removeSuffix(".png")) }
+        }
+        Toast.makeText(this, "${name.removeSuffix(".png")} 등록했습니다", Toast.LENGTH_SHORT).show()
+        // 등록이 끝나면 캡처 사진이 모여 있는 화면(캡처함)으로
+        if (snap == null && !intent.getBooleanExtra(EXTRA_FROM_MEMORY, false)) {
+            try { startActivity(android.content.Intent(this, SnapsActivity::class.java)) } catch (_: Exception) {}
+        }
+        finish()
     }
 
     override fun onResume() {
@@ -425,6 +444,39 @@ class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -
         val dw = bmp.width * s; val dh = bmp.height * s
         fitRect.set((w - dw) / 2f, (h - dh) / 2f, (w + dw) / 2f, (h + dh) / 2f)
         updateImgRect()
+        applyRestore()
+    }
+
+    /** 지금 네모(0~1 비율)와 확대 배율 — 다음 등록 때 그대로 쓰려고 기억한다 */
+    fun state(): Pair<RectF, Float> = RectF(crop) to zoom
+
+    private var pendingRestore: Pair<RectF, Float>? = null
+
+    /** 기억해 둔 네모·배율로 맞추고, 네모가 화면 가운데 오게 한다 */
+    fun restore(r: RectF, z: Float) {
+        val l = r.left.coerceIn(0f, 0.98f); val t = r.top.coerceIn(0f, 0.98f)
+        val rr = r.right.coerceIn(l + 0.01f, 1f); val b = r.bottom.coerceIn(t + 0.01f, 1f)
+        pendingRestore = RectF(l, t, rr, b) to z.coerceIn(1f, 8f)
+        if (width > 0 && height > 0) applyRestore()
+    }
+
+    private fun applyRestore() {
+        val (r, z) = pendingRestore ?: return
+        if (width <= 0 || height <= 0) return
+        pendingRestore = null
+        crop.set(r)
+        zoom = 1f; panX = 0f; panY = 0f
+        updateImgRect()
+        if (z > 1.01f) {
+            val c = cropOnScreen()
+            zoomAt(z, c.centerX(), c.centerY())
+            val c2 = cropOnScreen()
+            panX += width / 2f - c2.centerX(); panY += height / 2f - c2.centerY()
+            updateImgRect()
+        }
+        invalidate()
+        onZoomChanged?.invoke(zoom)
+        onChange()
     }
 
     /** 확대·이동을 반영해 사진 영역을 다시 계산하고, 화면 밖으로 너무 나가지 않게 막는다 */

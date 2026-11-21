@@ -567,22 +567,41 @@ class CaptureService : Service() {
      */
     private var graceLogged = false
 
+    /** 로비 후보 — 연달아 보여야 진짜 로비로 본다 (한 번 반짝 맞은 것으로 보스를 지우지 않게) */
+    private var lobbyCandidate: String? = null
+    private var lobbyCandHits = 0
+
+    /** 로비 오인식 확인용 화면 저장 간격 */
+    private var lastLobbyShotAt = 0L
+
     private fun checkLobby(scr: Mat, now: Long): Boolean {
         for ((lobby, lobbyMode) in listOf(
             PcDefaults.LOBBY_NORMAL to GameMode.NORMAL,
             PcDefaults.LOBBY_INVASION to GameMode.INVASION,
             PcDefaults.LOBBY_COMMON to null
         )) {
-            val files = templates.lobbyShots(lobby)
             var best = 0.0
-            for (fn in files) {
+            var bestFile: String? = null
+            for (fn in templates.lobbyShots(lobby)) {
                 val t = templates.getUsable(fn) ?: continue
-                val r = matcher.multiScale(scr, t, PcDefaults.LOBBY_THRESHOLD, downscale = downscale)
-                if (r.score > best) best = r.score
-                if (best >= PcDefaults.LOBBY_THRESHOLD) break
+                // 이 기기에서 찍은 로비 사진은 높은 기준, PC 사진은 기준값 + 윤곽선 검사
+                val phone = templates.isPhoneShot(fn)
+                val th = if (phone) PcDefaults.LOBBY_THRESHOLD_PHONE else PcDefaults.LOBBY_THRESHOLD
+                val r = matcher.multiScale(scr, t, th, downscale = downscale)
+                if (r.score < th) continue
+                if (!phone && matcher.verifyEdge(scr, t, r.x, r.y, r.w, r.h) < PcDefaults.LOBBY_MIN_EDGE) continue
+                best = r.score; bestFile = fn
+                break
             }
-            if (best < PcDefaults.LOBBY_THRESHOLD) continue
+            if (bestFile == null) continue
 
+            // 연달아 보여야 로비 — 한 번만 맞은 것은 아직 믿지 않는다
+            if (lobbyCandidate == lobby) lobbyCandHits++ else { lobbyCandidate = lobby; lobbyCandHits = 1 }
+            if (!inLobby && lobbyCandHits < PcDefaults.LOBBY_CONFIRM_HITS) return false
+
+            val entering = !inLobby
+            val label = PcDefaults.lobbyLabel(lobby)
+            val oldMode = session.mode
             val newMode = lobbyMode ?: session.mode
             val modeChanged = newMode != session.mode
             if (modeChanged) {
@@ -590,15 +609,18 @@ class CaptureService : Service() {
                 streak.clear()
                 Prefs.setMode(this, newMode.key)
                 Bus.mode = newMode
-                // 게임 중에도 바로 알 수 있게 화면에 잠깐 띄운다
-                android.os.Handler(android.os.Looper.getMainLooper()).post {
-                    try {
-                        android.widget.Toast.makeText(this,
-                            if (newMode == GameMode.INVASION) "🔥 침공로비 감지 → 침공 모드" else "🟢 태초로비 감지 → 일반(태초) 모드",
-                            android.widget.Toast.LENGTH_SHORT).show()
-                    } catch (_: Exception) {}
-                }
                 updateNotification("감시 중 · ${newMode.label} (${PcDefaults.speedLabel(newMode, Prefs.speedLock(this))})")
+            }
+            // 게임 화면 가운데 조금 아래에 잠깐 알린다 (예: 태초모드 > 침공모드 전환)
+            val willReset = session.activationOrder.isNotEmpty() && now - Bus.cropClosedAt >= CROP_GRACE_MS
+            if (modeChanged || entering || willReset) {
+                val head = when {
+                    modeChanged -> (if (newMode == GameMode.INVASION) "🔥 " else "🟢 ") +
+                            "${oldMode.label}모드 > ${newMode.label}모드 전환"
+                    lobbyMode == null -> "🏁 $label 인식"
+                    else -> "🏠 $label 인식"
+                }
+                Bus.notice(if (willReset) "$head\n보스 사진 초기화" else head)
             }
             // 자르기 화면에서 막 돌아온 직후(15초)에는 로비가 잠깐 보여도 보스를 지우지 않는다
             // (게임이 다시 접속하면서 로비를 잠깐 보여 주는 경우가 있어서)
@@ -611,10 +633,13 @@ class CaptureService : Service() {
             }
             graceLogged = false
             if (session.activationOrder.isNotEmpty()) {
-                Bus.log(if (lobbyMode == null)
-                    "🏠 [$lobby 인식 → ${newMode.label} 모드 유지] 보스 사진을 초기화합니다. (정확도 ${pct(best)})"
+                Bus.log((if (lobbyMode == null)
+                    "🏁 [$label(공통로비) 인식 → ${newMode.label} 모드 유지] 보스 사진을 초기화합니다."
                 else
-                    "🏠 [$lobby 귀환 → ${newMode.label} 모드] 보스 사진을 초기화합니다. (정확도 ${pct(best)})")
+                    "🏠 [$lobby 귀환 → ${newMode.label} 모드] 보스 사진을 초기화합니다.") +
+                        " (사진 '${bestFile.removeSuffix(".png")}', 정확도 ${pct(best)}, " +
+                        "보스 ${session.activationOrder.size}마리였음)")
+                saveLobbyShot(scr, bestFile, now)
                 endGame()
                 lobbyQuietUntil = now + LOBBY_QUIET_MS
             } else if (modeChanged) {
@@ -623,7 +648,27 @@ class CaptureService : Service() {
             }
             return true
         }
+        lobbyCandidate = null; lobbyCandHits = 0
         return false
+    }
+
+    /**
+     * 게임 중 로비로 인식해서 보스를 지웠을 때, 그 순간 화면을 사진첩에 남긴다.
+     * (사진첩 › 운빨보스알림 › 원본화면 › 로비인식_…) — 오인식이면 어떤 사진이 문제인지 바로 알 수 있다.
+     */
+    private fun saveLobbyShot(scr: Mat, file: String, now: Long) {
+        if (now - lastLobbyShotAt < 20_000) return
+        lastLobbyShotAt = now
+        try {
+            val bmp = Bitmap.createBitmap(scr.cols(), scr.rows(), Bitmap.Config.ARGB_8888)
+            org.opencv.android.Utils.matToBitmap(scr, bmp)
+            Thread {
+                Backup.saveFullScreen(this, bmp, "로비인식_${file.removeSuffix(".png")}")
+                bmp.recycle()
+            }.start()
+        } catch (e: Exception) {
+            Log.w(TAG, "로비 화면 저장 실패", e)
+        }
     }
 
     /** 1배속/2배속 표시를 읽는다 (PC monitor 의 배속 인식과 같은 판정) */
@@ -689,21 +734,29 @@ class CaptureService : Service() {
             if (ok) Bus.log("🔎 [구제 인식] $name — 보충 크기 검사로 찾았습니다. " +
                     "(정확도 ${pct(out.score)})")
 
-            // ③ 보조 스샷 — 네임텍이 겹친 화면을 찍어뒀다면 여기서 걸린다
-            if (!ok) {
-                for (fn in templates.extraShots(name, session.mode)) {
-                    val ex = templates.get(fn) ?: continue
-                    val e = matcher.multiScale(scr, ex, th, downscale = downscale)
-                    if (e.score > out.score) out = e
-                    if (out.score >= th) {
-                        ok = true
-                        Bus.log("🖼 [보조 스샷 인식] $name — '$fn' 로 찾았습니다. " +
-                                "(정확도 ${pct(out.score)})")
-                        break
-                    }
+        }
+
+        // ③ 보조 사진 — 이 기기에서 찍은 보조 사진은 기본 사진 점수와 상관없이 항상 본다
+        //    (PC 기본 사진이 폰 화면에서 낮게 나와도 내가 등록한 사진으로 잡히게)
+        //    PC 보조 사진은 예전처럼 구제 구간에서만 본다
+        if (!ok) {
+            for (fn in templates.extraShots(name, session.mode)) {
+                val phone = templates.isPhoneShot(fn)
+                if (!phone && !inBand) continue
+                val ex = templates.get(fn) ?: continue
+                val sc = if (phone && Prefs.powerSave(this)) NARROW_SCALES else BossCatalog.SCALES
+                val e = matcher.multiScale(scr, ex, th, scales = sc, downscale = downscale)
+                if (e.score > out.score) out = e
+                if (out.score >= th) {
+                    ok = true
+                    Bus.log("🖼 [보조 사진 인식] $name — '${fn.removeSuffix(".png")}' 로 찾았습니다. " +
+                            "(정확도 ${pct(out.score)})")
+                    break
                 }
             }
+        }
 
+        if (inBand) {
             // ④ 타일 분할 투표 (마지막 수단, 쿨다운으로 비용 상한)
             if (!ok && Prefs.tileMinAgree(this) > 0 && session.canTileVote(name, now)) {
                 session.markTileVote(name, now)

@@ -60,6 +60,12 @@ class TemplateStore(private val ctx: Context) {
     /** 내가 폰에서 직접 캡처했거나 가져온 사진인지 (앱에 같이 넣은 PC 사진이 아닌지) */
     fun isUser(fileName: String): Boolean = fileName in Prefs.userTemplates(ctx)
 
+    /** 이 기기(핸드폰·뮤뮤)에서 찍어 앱에 기본으로 넣어 둔 사진인지 */
+    fun isDeviceBundled(fileName: String): Boolean = fileName in AssetInstaller.deviceTemplateNames(ctx)
+
+    /** 이 기기에서 찍은 사진인지 (내가 등록했거나, 기기용 기본 사진) — PC 사진이 아님 */
+    fun isPhoneShot(fileName: String): Boolean = isUser(fileName) || isDeviceBundled(fileName)
+
     /**
      * 인식에 써도 되는 사진인지.
      * '새로 등록' 을 고르면 PC 사진은 쓰지 않고 내가 등록한 사진만 쓴다.
@@ -69,7 +75,7 @@ class TemplateStore(private val ctx: Context) {
     fun usable(fileName: String): Boolean {
         if (!File(dir, fileName).exists()) return false
         if (Prefs.usePcTemplates(ctx)) return true
-        return isUser(fileName) || fileName.contains("배속상태")
+        return isPhoneShot(fileName) || fileName.contains("배속상태")
     }
 
     fun getUsable(fileName: String): Mat? = if (usable(fileName)) get(fileName) else null
@@ -89,11 +95,8 @@ class TemplateStore(private val ctx: Context) {
     }
 
     /** 그 보스 인식에 쓰는 기본 사진이 내가 등록한 사진인지 (발열 줄이기용) */
-    fun bossFileIsUser(name: String, mode: GameMode): Boolean {
-        val inv = "${INVASION_PREFIX}$name.png"
-        val f = if (mode == GameMode.INVASION && usable(inv)) inv else "$name.png"
-        return isUser(f)
-    }
+    fun bossFileIsUser(name: String, mode: GameMode): Boolean =
+        forBossFile(name, mode)?.let { isPhoneShot(it) } == true
 
     // ── 되돌리기 ──
 
@@ -141,9 +144,14 @@ class TemplateStore(private val ctx: Context) {
     } catch (_: Exception) { false }
 
     /** 모드에 맞는 기본 템플릿 — 침공이면 '침공_' 사진을 먼저 쓴다 */
-    fun forBoss(name: String, mode: GameMode): Mat? {
-        if (mode == GameMode.INVASION) getUsable("${INVASION_PREFIX}$name.png")?.let { return it }
-        return getUsable("$name.png")
+    fun forBoss(name: String, mode: GameMode): Mat? = forBossFile(name, mode)?.let { get(it) }
+
+    /** 그 보스 인식에 쓰는 기본 사진 파일 이름 (없으면 null) */
+    fun forBossFile(name: String, mode: GameMode): String? {
+        val inv = "${INVASION_PREFIX}$name.png"
+        if (mode == GameMode.INVASION && usable(inv) && get(inv) != null) return inv
+        val base = "$name.png"
+        return if (usable(base) && get(base) != null) base else null
     }
 
     /** 보스의 보조 스샷 파일 이름 목록 (존재하는 것만) */

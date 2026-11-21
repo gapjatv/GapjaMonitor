@@ -273,8 +273,8 @@ class MainActivity : AppCompatActivity() {
             .setMessage(
                 "• 기본 사진 그대로 (추천): 앱에 들어 있는 보스·로비 사진으로 바로 시작합니다. " +
                 "인식이 잘 안 되는 보스만 게임 중 [보스설정 → 캡처] 로 추가하면 함께 씁니다.\n\n" +
-                "• 직접 새로 등록: 내가 캡처한 사진만 씁니다. 기기마다 화면이 조금씩 달라서 가장 정확하지만, " +
-                "보스와 로비 화면을 한 장씩 등록해야 인식이 시작됩니다. 지금 등록된 내 사진: ${mine}장\n\n" +
+                "• 직접 새로 등록: PC 사진은 빼고, 내가 캡처한 사진과 이 기기용(핸드폰) 기본 사진만 씁니다. " +
+                "핸드폰 기본 사진에 없는 보스·로비는 직접 등록해야 인식됩니다. 지금 등록된 내 사진: ${mine}장\n\n" +
                 "언제든 메인 화면 '인식용 사진' 에서 바꿀 수 있습니다." +
                 if (Prefs.templateSourceAsked(this)) "\n\n(지금: ${if (usingDefault) "기본 사진 그대로" else "직접 새로 등록"})" else ""
             )
@@ -496,6 +496,20 @@ class MainActivity : AppCompatActivity() {
             btn("🔈 음성 테스트", "#16A085") { speaker.sayBoss("그런트") },
             btn("🔊 MP3 추가", "#2980B9") { pickVoices.launch(arrayOf("audio/mpeg")) }
         ))
+        col.addView(btn("🎵 보스별 음성 바꾸기 (인식 음성 · 경보 음성 / 원본 되돌리기)", "#8E44AD") {
+            startActivity(Intent(this, VoiceActivity::class.java))
+        })
+        col.addView(TextView(this).apply {
+            text = "ⓘ [MP3 추가] 는 파일 이름으로 여러 개를 한꺼번에 넣는 기능입니다. 이름이 정확히 같아야 적용돼요.\n" +
+                    "  • 보스 인식 음성(보스가 처음 나올 때): 보스이름.mp3\n" +
+                    "     예) 그런트.mp3 · 샤먼.mp3 · 사신.mp3 · 고기슬라임.mp3 · 콜디스트.mp3 · 보호막로봇.mp3\n" +
+                    "     특수보스는 거대 전기로봇.mp3 처럼 띄어쓰기까지 똑같이\n" +
+                    "  • 경보 멘트(경보음이 없는 보스): 준비.mp3 · 변신주의.mp3 · 미티어대비.mp3 · 삭제대비.mp3 · 반파주의.mp3\n" +
+                    "  • 같은 이름이 이미 있으면 새 파일로 바뀝니다.\n" +
+                    "이름 맞추기가 번거로우면 [🎵 보스별 음성 바꾸기] 에서 보스를 고르고 파일만 지정하세요. 경보 음성도 여기서 바꿉니다."
+            setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 11f
+            setPadding(dp(2), dp(4), 0, dp(4))
+        })
 
         // ── 보스 위험 경보 ──
         buildWarnings(col)

@@ -79,6 +79,11 @@ object Bus {
 
     fun cropOpened() { main.post { try { onCropOpened?.invoke() } catch (_: Exception) {} } }
 
+    /** 게임 화면 가운데 조금 아래에 잠깐 띄울 알림 (로비·모드 전환) */
+    var onNotice: ((String) -> Unit)? = null
+
+    fun notice(text: String) { main.post { try { onNotice?.invoke(text) } catch (_: Exception) {} } }
+
     /** [보스설정 → 끄기] 를 누르면 메인 화면을 닫는다 */
     var onExit: (() -> Unit)? = null
 

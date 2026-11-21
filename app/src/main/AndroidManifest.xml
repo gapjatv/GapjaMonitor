@@ -64,6 +64,12 @@
             android:taskAffinity=""
             android:theme="@style/Theme.Gapja.Transparent" />
 
+        <!-- 보스별 음성 바꾸기 (인식 음성 · 경보 음성, 원본으로 되돌리기) -->
+        <activity
+            android:name=".VoiceActivity"
+            android:exported="false"
+            android:label="보스별 음성" />
+
         <!-- 캡처함 — 게임 중 저장한 화면을 나중에 잘라 등록 -->
         <activity
             android:name=".SnapsActivity"

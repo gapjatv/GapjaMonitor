@@ -24,8 +24,12 @@ import java.io.File
  */
 object AssetInstaller {
 
-    /** 자료를 바꿔서 새로 넣을 때 올린다 (2: 로비 3종·배속 사진·경보음·경보 멘트 추가) */
-    private const val VERSION = 2
+    /**
+     * 자료를 바꿔서 새로 넣을 때 올린다
+     *   2: 로비 3종·배속 사진·경보음·경보 멘트 추가
+     *   3: 핸드폰 기본 사진 15장 (github.com/gapjatv/png, 2026-11-21)
+     */
+    private const val VERSION = 3
 
     private val FOLDERS = listOf("templates", "display", "voices", "alarms")
 
@@ -34,6 +38,12 @@ object AssetInstaller {
         val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: ""
         return if (abi.startsWith("x86")) "templates_mumu" else "templates_phone"
     }
+
+    @Volatile private var deviceNames: Set<String>? = null
+
+    /** 이 기기용으로 앱에 넣어 둔 폰(뮤뮤) 사진 이름들 */
+    fun deviceTemplateNames(ctx: Context): Set<String> =
+        deviceNames ?: list(ctx, deviceTemplateFolder()).toSet().also { deviceNames = it }
 
     private fun list(ctx: Context, folder: String): Array<String> =
         try { ctx.assets.list(folder) ?: emptyArray() } catch (_: Exception) { emptyArray() }

@@ -35,9 +35,27 @@ object Snaps {
         val hint = hintBoss?.replace(Regex("[\\\\/:*?\"<>|_]"), "") ?: ""
         val f = File(dir(ctx), "${mode.key}_${stamp}_$hint.png")
         f.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
-        list(ctx).drop(MAX_KEEP).forEach { it.delete() }
+        list(ctx).drop(MAX_KEEP).forEach { forget(ctx, it); it.delete() }
         f
     } catch (_: Exception) { null }
+
+    // ── 등록 표시 — 이 캡처에서 어떤 사진을 잘라 등록했는지 ──
+
+    private fun sp(ctx: Context) = ctx.getSharedPreferences("snaps", Context.MODE_PRIVATE)
+
+    /** 이 캡처에서 잘라 등록한 사진 이름들 (예: 그런트, 침공_샤먼_2) */
+    fun registered(ctx: Context, f: File): List<String> =
+        (sp(ctx).getStringSet(f.name, null) ?: emptySet()).sorted()
+
+    fun markRegistered(ctx: Context, f: File, savedName: String) {
+        val cur = (sp(ctx).getStringSet(f.name, null) ?: emptySet()).toMutableSet()
+        cur.add(savedName.removeSuffix(".png"))
+        sp(ctx).edit().putStringSet(f.name, cur).apply()
+    }
+
+    fun forget(ctx: Context, f: File) = sp(ctx).edit().remove(f.name).apply()
+
+    fun forgetAll(ctx: Context) = sp(ctx).edit().clear().apply()
 
     /** 파일 이름에서 모드를 읽는다 */
     fun modeOf(f: File): GameMode = GameMode.from(f.name.substringBefore('_'))

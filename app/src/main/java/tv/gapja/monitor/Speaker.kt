@@ -69,8 +69,9 @@ class Speaker(private val ctx: Context) {
         if (!Prefs.voiceEnabled(ctx)) return
         if (!Prefs.speakBossName(ctx)) return
         val text = PcDefaults.VOICE_TEXT[name] ?: name
-        for (cand in listOf(text, name)) {
-            val mp3 = File(voiceDir, "$cand.mp3")
+        // ① [보스별 음성 바꾸기] 로 지정한 파일 ② 보스이름.mp3 ③ 줄임말.mp3(기본 음성) ④ 내장 TTS
+        val cands = listOf(userVoice(ctx, name), File(voiceDir, "$name.mp3"), File(voiceDir, "$text.mp3"))
+        for (mp3 in cands) {
             if (mp3.exists() && mp3.length() > MIN_AUDIO_BYTES) { playFile(mp3); return }
         }
         say(text)
@@ -100,6 +101,12 @@ class Speaker(private val ctx: Context) {
      */
     fun playWarning(boss: String): String? {
         if (!Prefs.voiceEnabled(ctx)) return null
+        // [보스별 음성 바꾸기] 로 지정한 경보 음성이 있으면 그것을 먼저
+        val mine = userAlarm(ctx, boss)
+        if (mine.exists() && mine.length() > MIN_AUDIO_BYTES) {
+            playFile(mine, front = true)
+            return "내 경보 음성"
+        }
         val alarm = AssetInstaller.alarmFile(ctx, boss)
         if (alarm.exists() && alarm.length() > MIN_AUDIO_BYTES) {
             playFile(alarm, front = true)
@@ -189,8 +196,31 @@ class Speaker(private val ctx: Context) {
         ready = false
     }
 
+    /** 미리 듣기 — 줄을 서지 않고 바로 재생 */
+    fun preview(f: File?, fallbackText: String?) {
+        stopPlayer()
+        try { tts?.stop() } catch (_: Exception) {}
+        if (f != null && f.exists() && f.length() > MIN_AUDIO_BYTES) playFile(f)
+        else if (!fallbackText.isNullOrBlank()) say(fallbackText)
+    }
+
+    /** 이 보스가 나왔을 때 실제로 재생될 인식 음성 파일 (없으면 null = 내장 TTS) */
+    fun bossVoiceFile(name: String): File? {
+        val text = PcDefaults.VOICE_TEXT[name] ?: name
+        return listOf(userVoice(ctx, name), File(voiceDir, "$name.mp3"), File(voiceDir, "$text.mp3"))
+            .firstOrNull { it.exists() && it.length() > MIN_AUDIO_BYTES }
+    }
+
     companion object {
         private const val TAG = "Speaker"
+
+        /** [보스별 음성 바꾸기] 로 지정한 보스 인식 음성 (원본은 건드리지 않는다) */
+        fun userVoice(ctx: Context, boss: String): File =
+            File(File(ctx.filesDir, "voices_user").apply { mkdirs() }, "$boss.mp3")
+
+        /** [보스별 음성 바꾸기] 로 지정한 경보 음성 */
+        fun userAlarm(ctx: Context, boss: String): File =
+            File(File(ctx.filesDir, "alarms_user").apply { mkdirs() }, "$boss.mp3")
 
         /** 이보다 작은 mp3는 깨진 파일로 본다 (PC판에서 0바이트 파일로 생긴 문제 방지) */
         private const val MIN_AUDIO_BYTES = 800L

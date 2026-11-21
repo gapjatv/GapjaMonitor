@@ -94,6 +94,7 @@ class OverlayService : Service() {
         }
         Bus.addChangeListener(listener)
         Bus.onCropOpened = { hideLoading() }
+        Bus.onNotice = { t -> showNotice(t) }
         // 게임이 다른 화면(뮤뮤 탭)으로 옮겨 가면 오버레이도 따라간다
         Bus.onGameDisplay = { d -> moveToDisplay(d) }
         render()
@@ -182,6 +183,7 @@ class OverlayService : Service() {
     private fun removeAllWindows() {
         if (editing) { editing = false; hidePanel() }
         hideLoading()
+        hideNotice()
         try { strip?.let { wm?.removeView(it) } } catch (_: Exception) {}
         try { chip?.let { wm?.removeView(it) } } catch (_: Exception) {}
         strip = null; chip = null
@@ -777,6 +779,46 @@ class OverlayService : Service() {
         }, 250)
     }
 
+    // ── 로비·모드 전환 알림 (화면 가운데 조금 아래, 2.5초) ─────────
+
+    private var notice: View? = null
+    private val hideNoticeRunnable = Runnable { hideNotice() }
+
+    private fun showNotice(text: String) {
+        hideNotice()
+        val tv = TextView(uiCtx).apply {
+            this.text = text
+            setTextColor(Color.WHITE); textSize = 17f
+            setTypeface(typeface, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setLineSpacing(dp(3).toFloat(), 1f)
+            setPadding(dp(22), dp(12), dp(22), dp(12))
+            background = GradientDrawable().apply {
+                cornerRadius = dp(16).toFloat()
+                setColor(Color.parseColor("#E6101A24"))
+                setStroke(dp(2), Color.parseColor(if (text.contains("침공")) "#E67E22" else "#1ABC9C"))
+            }
+        }
+        val (_, sh) = screenSize()
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
+            overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.CENTER; y = (sh * 0.12f).toInt() }
+        try { wm?.addView(tv, lp); notice = tv } catch (_: Exception) { return }
+        tv.alpha = 0f
+        tv.animate().alpha(1f).setDuration(180).start()
+        main.removeCallbacks(hideNoticeRunnable)
+        main.postDelayed(hideNoticeRunnable, 2500)
+    }
+
+    private fun hideNotice() {
+        main.removeCallbacks(hideNoticeRunnable)
+        notice?.let { try { wm?.removeView(it) } catch (_: Exception) {} }
+        notice = null
+    }
+
     // ── '캡처 준비 중…' 안내 (화면 가운데) ───────────────────────
 
     private var loading: View? = null
@@ -900,7 +942,9 @@ class OverlayService : Service() {
     override fun onDestroy() {
         main.removeCallbacks(fadeRunnable)
         hideLoading()
+        hideNotice()
         Bus.onCropOpened = null
+        Bus.onNotice = null
         Bus.onGameDisplay = null
         Bus.removeChangeListener(listener)
         hidePanel()
