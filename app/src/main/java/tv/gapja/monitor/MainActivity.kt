@@ -52,6 +52,10 @@ class MainActivity : AppCompatActivity() {
     private var mode = GameMode.INVASION
     private var modeBtn: Button? = null
     private var sourceView: TextView? = null
+    private var methodView: TextView? = null
+    private var projBtn: Button? = null
+    private var a11yBtn: Button? = null
+    private var a11yOnBtn: Button? = null
     private var addBtn: Button? = null
     private var addWhereBtn: Button? = null
     private var sourceBtn: Button? = null
@@ -348,6 +352,29 @@ class MainActivity : AppCompatActivity() {
                 toast("이번 판을 끝내고 초기화했습니다 (침공 판은 기록됩니다)")
             }
         ))
+
+        // ── 인식 방식: 화면 공유 / 접근성 ──
+        col.addView(h("인식 방식"))
+        methodView = TextView(this).apply {
+            setTextColor(Color.WHITE); textSize = 12f
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(CARD)
+            setLineSpacing(0f, 1.3f)
+        }
+        col.addView(methodView)
+        projBtn = btn("📺 화면 공유", "#3C4B5A") {
+            Prefs.setUseA11y(this, false); refresh()
+            Bus.log("📺 [인식 방식] 화면 공유 — 빠르지만 시작할 때 확인창이 뜹니다.")
+        }
+        a11yBtn = btn("♿ 접근성 (확인창 없음)", "#3C4B5A") {
+            if (!BossA11yService.supported()) { toast("안드로이드 11 이상에서만 쓸 수 있습니다"); return@btn }
+            Prefs.setUseA11y(this, true); refresh()
+            Bus.log("♿ [인식 방식] 접근성 — 확인창 없이 시작합니다.")
+            if (!BossA11yService.isOn(this)) showA11yGuide()
+        }
+        col.addView(row(projBtn!!, a11yBtn!!))
+        a11yOnBtn = btn("⚙️ 접근성 켜러 가기", "#8E44AD") { showA11yGuide() }
+        col.addView(a11yOnBtn)
 
         // ── 모드 · 배속 (PC판처럼 버튼 하나씩) ──
         col.addView(h("모드 · 배속"))
@@ -750,7 +777,44 @@ class MainActivity : AppCompatActivity() {
                 Uri.parse("package:$packageName")))
             return
         }
+        if (Prefs.useA11y(this)) {
+            // 접근성 방식 — 확인창 없이 바로 시작
+            if (!BossA11yService.isOn(this) || BossA11yService.instance == null) { showA11yGuide(); return }
+            CaptureService.startA11y(this, GameMode.from(Prefs.mode(this)),
+                Prefs.downscale(this), Prefs.intervalMs(this))
+            Toast.makeText(this, "감시를 시작했습니다. 게임을 켜세요", Toast.LENGTH_SHORT).show()
+            moveTaskToBack(true)
+            return
+        }
         projectionLauncher.launch(CaptureService.captureIntent(this))
+    }
+
+    /**
+     * 접근성 켜는 법 안내.
+     * 직접 설치한 앱(APK)은 안드로이드 13부터 접근성을 켜기 전에 '제한된 설정 허용' 을 먼저 해야 한다.
+     */
+    private fun showA11yGuide() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("접근성 켜기 (확인창 없이 시작)")
+            .setMessage(
+                "1. [접근성 설정 열기] → '설치된 앱' (또는 '다운로드한 앱') → '운빨보스알림' → 사용 켜기\n\n" +
+                "2. '제한된 설정' 이라며 켜지지 않으면:\n" +
+                "   [앱 정보 열기] → 오른쪽 위 ⋮ → '제한된 설정 허용' → 다시 1번\n\n" +
+                "켜 두면 다음부터 [시작] 할 때 '화면을 공유하시겠습니까?' 창이 뜨지 않습니다. " +
+                "화면은 폰 안에서만 보스와 비교하고 어디로도 보내지 않습니다.\n\n" +
+                "※ 안드로이드가 화면 찍는 간격을 제한해서 화면 공유 방식보다 조금 느립니다 (약 0.4초마다)."
+            )
+            .setPositiveButton("접근성 설정 열기") { _, _ ->
+                try { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) } catch (_: Exception) {}
+            }
+            .setNeutralButton("앱 정보 열기") { _, _ ->
+                try {
+                    startActivity(Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                        Uri.parse("package:$packageName")))
+                } catch (_: Exception) {}
+            }
+            .setNegativeButton("닫기", null)
+            .show()
     }
 
     private fun shareJson() {
@@ -779,6 +843,18 @@ class MainActivity : AppCompatActivity() {
         sourceView?.text = (if (usePc) "🧩 기본 사진으로 인식하는 중 (직접 캡처한 사진도 함께 씀)\n"
                 else "🆕 직접 등록한 사진만 쓰는 중\n") +
                 "내가 등록한 사진: ${Prefs.userTemplates(this).size}장 · ${m.label} 등록 현황 $done/${targets.size}"
+        val a11y = Prefs.useA11y(this)
+        val a11yOn = BossA11yService.isOn(this)
+        projBtn?.setBackgroundColor(Color.parseColor(if (!a11y) "#1ABC9C" else "#3C4B5A"))
+        a11yBtn?.setBackgroundColor(Color.parseColor(if (a11y) "#1ABC9C" else "#3C4B5A"))
+        a11yOnBtn?.visibility = if (a11y && !a11yOn) View.VISIBLE else View.GONE
+        methodView?.text = if (!a11y)
+            "📺 화면 공유 — 가장 빠름 (0.15초마다). [시작] 할 때 '화면을 공유하시겠습니까?' 확인창이 뜹니다.\n" +
+            "뮤뮤플레이어에서 화면이 어두워지고 멈추면 → 뒤로가기 → '접근성' 을 고르세요."
+        else if (a11yOn)
+            "♿ 접근성 — 켜져 있음 ✔. 확인창 없이 바로 시작합니다. (약 0.4초마다 확인)"
+        else
+            "♿ 접근성 — 아직 꺼져 있음. 아래 [접근성 켜러 가기] 로 한 번만 켜 주세요."
         val gal = Prefs.pickFromGallery(this)
         addBtn?.text = if (gal) "📷 사진 추가 — 사진첩에서 스크린샷 골라 보스·로비 잘라 넣기"
         else "📁 사진 추가 — 파일에서 잘라 둔 PNG 가져오기"

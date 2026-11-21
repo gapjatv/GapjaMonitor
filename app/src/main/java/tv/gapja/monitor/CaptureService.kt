@@ -117,7 +117,7 @@ class CaptureService : Service() {
         seqRepo = SeqRepo(this)
         seq = seqRepo.load()
         speaker = Speaker(this)
-        startForeground(NOTIF_ID, buildNotification("준비 중"))
+        // startForeground 는 onStartCommand 에서 방식(화면 공유 / 접근성)에 맞는 종류로 부른다
         // 메인 화면을 거치지 않고(게임 위 [시작]) 켜질 수도 있으니 여기서도 OpenCV 를 불러 둔다
         try { org.opencv.android.OpenCVLoader.initLocal() } catch (_: Throwable) {}
     }
@@ -125,6 +125,7 @@ class CaptureService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> {
+                startForegroundFor(projection = true)
                 val code = intent.getIntExtra(EXTRA_CODE, 0)
                 val data = intent.getParcelableExtra<Intent>(EXTRA_DATA)
                 val mode = GameMode.from(intent.getStringExtra(EXTRA_MODE))
@@ -132,6 +133,14 @@ class CaptureService : Service() {
                 intervalMs = intent.getLongExtra(EXTRA_INTERVAL, 150L)
                 if (data != null) beginCapture(code, data, mode)
                 else failStart("화면 공유 정보가 비어 있습니다.")
+            }
+            // 접근성 방식 — 확인창 없이 시작
+            ACTION_START_A11Y -> {
+                startForegroundFor(projection = false)
+                val mode = GameMode.from(intent.getStringExtra(EXTRA_MODE))
+                downscale = intent.getDoubleExtra(EXTRA_DOWNSCALE, 0.5)
+                intervalMs = intent.getLongExtra(EXTRA_INTERVAL, 150L)
+                handlerOn().post { beginA11y(mode) }
             }
             // 감시 루프는 capture 스레드에서 판 상태를 읽고 쓰므로,
             // 판 상태를 바꾸는 동작도 같은 스레드에서 차례로 처리한다 (동시 접근 충돌 방지)
@@ -221,6 +230,15 @@ class CaptureService : Service() {
             return
         }
 
+        viaA11y = false
+        markStarted(mode)
+        Bus.log("▶ 감시를 시작했습니다. (화면 공유 · ${w}×${h}, 축소 ${(downscale * 100).toInt()}%, " +
+                "${intervalMs}ms 간격, 템플릿 ${templates.count()}장)")
+        handlerOn().post(loop)
+    }
+
+    /** 감시가 실제로 시작됐을 때 공통 처리 */
+    private fun markStarted(mode: GameMode) {
         running = true
         Bus.running = true
         Bus.mode = mode
@@ -230,9 +248,109 @@ class CaptureService : Service() {
         lobbyNextCheck = 0L; lobbyQuietUntil = 0L; inLobby = false
         paused = false; Bus.paused = false
         updateNotification("감시 중 · ${session.mode.label} (${PcDefaults.speedLabel(session.mode, Prefs.speedLock(this))})")
-        Bus.log("▶ 감시를 시작했습니다. (${w}×${h}, 축소 ${(downscale * 100).toInt()}%, " +
-                "${intervalMs}ms 간격, 템플릿 ${templates.count()}장)")
-        handlerOn().post(loop)
+    }
+
+    /**
+     * 포그라운드 서비스로 올린다 — 방식에 맞는 종류로.
+     * Android 14부터 '화면 공유' 종류는 화면 공유 동의가 있어야만 쓸 수 있어서,
+     * 접근성 방식에서는 '특수 용도(specialUse)' 종류를 쓴다.
+     */
+    private fun startForegroundFor(projection: Boolean) {
+        val n = buildNotification("준비 중")
+        try {
+            if (Build.VERSION.SDK_INT >= 34) {
+                startForeground(NOTIF_ID, n,
+                    if (projection) android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION
+                    else android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE)
+            } else {
+                startForeground(NOTIF_ID, n)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "포그라운드 시작 실패", e)
+        }
+    }
+
+    // ── 접근성 방식 ──────────────────────────────────────────────
+
+    /** 접근성 방식으로 감시 중인지 */
+    private var viaA11y = false
+    /** 지금 화면을 찍는 중인지 (한 번에 한 장만) */
+    private var a11yBusy = false
+    /** 접근성 화면 찍기 간격 — 안드로이드가 거절하면 늘린다 */
+    private var a11yGapMs = 400L
+    /** [캡처] 를 누른 시각 — 그 뒤에 찍기 시작한 화면만 캡처로 쓴다 (사진 줄이 찍히지 않게) */
+    @Volatile private var pendingSnapAt = 0L
+
+    private fun beginA11y(mode: GameMode) {
+        if (running) return
+        if (!BossA11yService.supported()) {
+            failStart("접근성 화면 읽기는 안드로이드 11 이상에서만 됩니다."); return
+        }
+        if (BossA11yService.instance == null) {
+            failStart("접근성 권한이 꺼져 있습니다. 메인 화면 '인식 방식' 에서 켜 주세요."); return
+        }
+        session.mode = mode
+        viaA11y = true
+        a11yBusy = false
+        a11yGapMs = max(A11Y_MIN_GAP_MS, intervalMs)
+        markStarted(mode)
+        Bus.log("▶ 감시를 시작했습니다. (접근성 · 확인창 없음, 약 ${a11yGapMs}ms 간격, 템플릿 ${templates.count()}장)")
+        handlerOn().post(a11yLoop)
+    }
+
+    /** 접근성 감시 루프 — 한 장 찍고, 분석하고, 잠깐 쉬고 다시 */
+    private val a11yLoop = object : Runnable {
+        override fun run() {
+            if (!running || !viaA11y) return
+            if (a11yBusy) return
+            val svc = BossA11yService.instance
+            if (svc == null) {
+                Bus.log("⏹ 접근성 권한이 꺼져서 감시를 멈췄습니다.")
+                stopEverything(keepOverlay = true)
+                return
+            }
+            a11yBusy = true
+            val startedAt = System.currentTimeMillis()
+            svc.grab { bmp, err ->
+                handlerOn().post {
+                    a11yBusy = false
+                    if (!running || !viaA11y) { bmp?.recycle(); return@post }
+                    if (bmp == null) {
+                        if (err == BossA11yService.ERROR_TOO_SOON) {
+                            a11yGapMs = (a11yGapMs + 150).coerceAtMost(1200)
+                        }
+                    } else {
+                        try { processBitmap(bmp, startedAt) } catch (e: Exception) { Log.w(TAG, "분석 오류", e) }
+                    }
+                    if (running && viaA11y) handlerOn().postDelayed(this, a11yGapMs)
+                }
+            }
+        }
+    }
+
+    /** 접근성으로 찍은 화면 한 장을 처리한다 (캡처 요청 → 분석) */
+    private fun processBitmap(bmp: Bitmap, startedAt: Long) {
+        var handedOff = false
+        pendingSnap?.let { cb ->
+            if (startedAt >= pendingSnapAt) {
+                pendingSnap = null
+                cb(bmp)               // 자르기 화면이 이 비트맵을 쓴다 (여기서 지우지 않는다)
+                handedOff = true
+            }
+        }
+        if (paused) { if (!handedOff) bmp.recycle(); return }
+        val w = bmp.width; val h = bmp.height
+        val buf = java.nio.ByteBuffer.allocateDirect(w * h * 4)
+        bmp.copyPixelsToBuffer(buf)
+        buf.rewind()
+        if (!handedOff) bmp.recycle()
+        val full = CvOps.fromRgba(buf, w, h, w * 4)
+        val eff = downscale * refScale(w, h)
+        val scr = if (kotlin.math.abs(eff - 1.0) < 0.001) full else {
+            val s2 = CvOps.resize(full, max(1, (w * eff).toInt()), max(1, (h * eff).toInt()))
+            full.release(); s2
+        }
+        analyze(scr)
     }
 
     /**
@@ -296,6 +414,7 @@ class CaptureService : Service() {
     private fun stopEverything(keepOverlay: Boolean = false) {
         if (!running && projection == null) return
         running = false
+        viaA11y = false
         endGame()
         try { virtualDisplay?.release() } catch (_: Exception) {}
         try { reader?.close() } catch (_: Exception) {}
@@ -361,6 +480,14 @@ class CaptureService : Service() {
             img.close()
         }
         val scr = screen ?: return
+        analyze(scr)
+    }
+
+    /**
+     * 한 화면을 분석한다 — 로비 → 배속 → 보스 순서.
+     * 화면 공유 방식과 접근성 방식이 같은 분석을 쓴다. 끝나면 scr 을 풀어 준다.
+     */
+    private fun analyze(scr: Mat) {
         try {
             val now = System.currentTimeMillis()
 
@@ -854,6 +981,21 @@ class CaptureService : Service() {
             )
         }
 
+        /** 접근성 방식으로 시작 (확인창 없음) */
+        fun startA11y(ctx: Context, mode: GameMode, downscale: Double, intervalMs: Long) {
+            ctx.startForegroundService(
+                Intent(ctx, CaptureService::class.java)
+                    .setAction(ACTION_START_A11Y)
+                    .putExtra(EXTRA_MODE, mode.key)
+                    .putExtra(EXTRA_DOWNSCALE, downscale)
+                    .putExtra(EXTRA_INTERVAL, intervalMs)
+            )
+        }
+
+        const val ACTION_START_A11Y = "tv.gapja.monitor.START_A11Y"
+        /** 접근성 방식 최소 간격 — 안드로이드 제한(약 333ms)보다 약간 넉넉히 */
+        private const val A11Y_MIN_GAP_MS = 400L
+
         const val ACTION_EXIT = "tv.gapja.monitor.EXIT"
         const val ACTION_PAUSE = "tv.gapja.monitor.PAUSE"
         const val ACTION_RESUME = "tv.gapja.monitor.RESUME"
@@ -902,7 +1044,7 @@ class CaptureService : Service() {
         fun requestSnapshot(cb: (Bitmap?) -> Unit) {
             val s = instance
             if (s == null || !s.running) { cb(null); return }
-            s.handlerOn().post { s.pendingSnap = cb }
+            s.handlerOn().post { s.pendingSnapAt = System.currentTimeMillis(); s.pendingSnap = cb }
         }
 
         /**

@@ -288,6 +288,16 @@ object Prefs {
     fun setStripPassThrough(ctx: Context, on: Boolean) =
         sp(ctx).edit().putBoolean("strip_pass", on).apply()
 
+    /**
+     * 인식 방식 — true 면 접근성(확인창 없음), false 면 화면 공유(빠름, 시작할 때 확인창).
+     * 처음 값: 뮤뮤플레이어 같은 PC 앱플레이어(x86_64)는 접근성, 폰은 화면 공유.
+     */
+    fun useA11y(ctx: Context): Boolean = sp(ctx).getBoolean("use_a11y",
+        android.os.Build.SUPPORTED_ABIS.firstOrNull()?.startsWith("x86") == true &&
+            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+
+    fun setUseA11y(ctx: Context, on: Boolean) = sp(ctx).edit().putBoolean("use_a11y", on).apply()
+
     /** [사진 추가] 를 누르면 사진첩에서 고를지(기본) 파일에서 고를지 */
     fun pickFromGallery(ctx: Context): Boolean = sp(ctx).getBoolean("pick_gallery", true)
 

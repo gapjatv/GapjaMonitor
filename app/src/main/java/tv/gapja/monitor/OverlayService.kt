@@ -377,6 +377,13 @@ class OverlayService : Service() {
 
     /** [시작] 게임 화면에서 바로 감시를 시작한다 (화면 공유 동의 창만 한 번 뜬다) */
     private fun startFromOverlay() {
+        if (Prefs.useA11y(this) && BossA11yService.instance != null) {
+            // 접근성 방식 — 확인창 없이 바로 시작
+            CaptureService.startA11y(this, tv.gapja.monitor.core.GameMode.from(Prefs.mode(this)),
+                Prefs.downscale(this), Prefs.intervalMs(this))
+            Toast.makeText(this, "감시를 시작했습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
         try {
             startActivity(Intent(this, ConsentActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION))

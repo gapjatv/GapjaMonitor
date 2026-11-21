@@ -4,6 +4,8 @@
     <!-- 포그라운드 서비스로 화면을 계속 캡처하기 위해 필요 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
+    <!-- 접근성 방식(확인창 없음)으로 감시할 때의 포그라운드 서비스 종류 -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
     <!-- 감시 중 알림 표시 (Android 13+ 에서는 사용자 허용이 필요하지만, 거부해도 동작한다) -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -70,7 +72,25 @@
         <service
             android:name=".CaptureService"
             android:exported="false"
-            android:foregroundServiceType="mediaProjection" />
+            android:foregroundServiceType="mediaProjection|specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="게임 화면의 보스를 접근성 화면 찍기로 인식해 음성으로 알려 줌" />
+        </service>
+
+        <!-- 접근성 방식 화면 읽기 (확인창 없이 시작) — 설정 › 접근성 에서 사용자가 직접 켠다 -->
+        <service
+            android:name=".BossA11yService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/boss_a11y" />
+        </service>
 
         <!-- 게임 위에 떠 있는 보스 패널 -->
         <service
