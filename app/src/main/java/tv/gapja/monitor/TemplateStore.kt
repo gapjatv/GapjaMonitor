@@ -88,6 +88,58 @@ class TemplateStore(private val ctx: Context) {
         }
     }
 
+    /** 그 보스 인식에 쓰는 기본 사진이 내가 등록한 사진인지 (발열 줄이기용) */
+    fun bossFileIsUser(name: String, mode: GameMode): Boolean {
+        val inv = "${INVASION_PREFIX}$name.png"
+        val f = if (mode == GameMode.INVASION && usable(inv)) inv else "$name.png"
+        return isUser(f)
+    }
+
+    // ── 되돌리기 ──
+
+    private val bakDir: File get() = File(ctx.filesDir, "templates_bak").apply { mkdirs() }
+
+    private fun backup(name: String) {
+        try { File(dir, name).copyTo(File(bakDir, name), overwrite = true) } catch (_: Exception) {}
+    }
+
+    fun exists(name: String): Boolean = File(dir, name).exists()
+
+    /** 덮어쓰기 전 사진이 보관되어 있는지 */
+    fun hasPrevious(name: String): Boolean = File(bakDir, name).exists()
+
+    /** 앱에 들어 있는 기본 사진이 있는지 */
+    fun hasBundled(name: String): Boolean =
+        AssetInstaller.bundledTemplatePath(ctx, name) != null
+
+    /** 덮어쓰기 전 사진으로 되돌린다 */
+    fun restorePrevious(name: String): Boolean = try {
+        val b = File(bakDir, name)
+        val cur = File(dir, name)
+        val tmp = File(bakDir, "$name.swap")
+        if (cur.exists()) cur.copyTo(tmp, overwrite = true)
+        b.copyTo(cur, overwrite = true)
+        if (tmp.exists()) tmp.renameTo(b) else b.delete()
+        cache.clear(); generation++; true
+    } catch (_: Exception) { false }
+
+    /** 앱에 들어 있던 기본 사진으로 되돌린다 (내 사진 표시도 지운다) */
+    fun restoreBundled(name: String): Boolean = try {
+        backup(name)
+        val path = AssetInstaller.bundledTemplatePath(ctx, name) ?: return false
+        ctx.assets.open(path).use { ins -> File(dir, name).outputStream().use { ins.copyTo(it) } }
+        Prefs.removeUserTemplate(ctx, name)
+        cache.clear(); generation++; true
+    } catch (_: Exception) { false }
+
+    /** 사진을 지운다 (되돌릴 수 있게 보관함에 남긴다) */
+    fun delete(name: String): Boolean = try {
+        backup(name)
+        val ok = File(dir, name).delete()
+        Prefs.removeUserTemplate(ctx, name)
+        cache.clear(); generation++; ok
+    } catch (_: Exception) { false }
+
     /** 모드에 맞는 기본 템플릿 — 침공이면 '침공_' 사진을 먼저 쓴다 */
     fun forBoss(name: String, mode: GameMode): Mat? {
         if (mode == GameMode.INVASION) getUsable("${INVASION_PREFIX}$name.png")?.let { return it }
@@ -133,6 +185,8 @@ class TemplateStore(private val ctx: Context) {
         }
         return try {
             val f = File(dir, name)
+            // 덮어쓰기 전에 이전 사진을 한 장 보관해 둔다 → '이전 사진으로 되돌리기'
+            if (f.exists()) backup(name)
             f.outputStream().use { bmp.compress(Bitmap.CompressFormat.PNG, 100, it) }
             Prefs.addUserTemplate(ctx, name)
             // 앱을 지웠다 다시 깔아도 되살릴 수 있게 '다운로드/GapjaMonitor' 에도 한 장 남긴다

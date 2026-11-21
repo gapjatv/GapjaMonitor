@@ -14,7 +14,13 @@ import java.io.File
  *
  * 인식용 사진에는 로비 화면 3종(태초로비·침공로비·공통로비)과 배속 표시(1배속상태·2배속상태)도 들어 있다.
  *
- * 이미 있는 파일은 덮어쓰지 않는다 — 사용자가 직접 캡처해서 바꾼 사진을 지키기 위해서다.
+ * 기기별 인식용 사진 (있으면 templates 위에 덮어 넣는다):
+ *   assets/templates_mumu/  → 뮤뮤 플레이어(x86) 에서 찍은 사진
+ *   assets/templates_phone/ → 핸드폰(arm) 에서 찍은 사진
+ *
+ * 새 버전(VERSION 이 올라감) 으로 업데이트하면:
+ *   • 사용자가 이 기기에서 직접 등록한 사진(✔ 내 사진)은 절대 덮어쓰지 않는다
+ *   • 나머지 기본 사진은 새로 넣은 사진으로 바꾼다 (바뀌기 전 사진은 templates_bak 에 보관)
  */
 object AssetInstaller {
 
@@ -23,28 +29,76 @@ object AssetInstaller {
 
     private val FOLDERS = listOf("templates", "display", "voices", "alarms")
 
+    /** 이 기기용 인식 사진 폴더 이름 (뮤뮤·에뮬레이터는 x86) */
+    fun deviceTemplateFolder(): String {
+        val abi = android.os.Build.SUPPORTED_ABIS.firstOrNull() ?: ""
+        return if (abi.startsWith("x86")) "templates_mumu" else "templates_phone"
+    }
+
+    private fun list(ctx: Context, folder: String): Array<String> =
+        try { ctx.assets.list(folder) ?: emptyArray() } catch (_: Exception) { emptyArray() }
+
+    /** 앱에 들어 있는 기본 인식 사진의 assets 경로 (기기용이 있으면 그것) — 없으면 null */
+    fun bundledTemplatePath(ctx: Context, name: String): String? {
+        val dev = deviceTemplateFolder()
+        if (name in list(ctx, dev)) return "$dev/$name"
+        if (name in list(ctx, "templates")) return "templates/$name"
+        return null
+    }
+
     fun installIfNeeded(ctx: Context): Int {
-        if (Prefs.assetsVersion(ctx) >= VERSION) return 0
+        val old = Prefs.assetsVersion(ctx)
+        if (old >= VERSION) return 0
+        val firstInstall = old <= 0
+        val mine = Prefs.userTemplates(ctx)
         var n = 0
-        for (folder in FOLDERS) {
-            val names = try { ctx.assets.list(folder) ?: emptyArray() } catch (_: Exception) { emptyArray() }
-            val dir = File(ctx.filesDir, folder).apply { mkdirs() }
-            for (name in names) {
+        // 기기용 사진 폴더를 templates 다음에 넣어 같은 이름이면 기기용이 이긴다
+        val sources = FOLDERS.map { it to it } + (deviceTemplateFolder() to "templates")
+        for ((src, dst) in sources) {
+            val dir = File(ctx.filesDir, dst).apply { mkdirs() }
+            for (name in list(ctx, src)) {
                 val out = File(dir, name)
-                if (out.exists() && out.length() > 0) continue
+                if (out.exists() && out.length() > 0) {
+                    // 처음 설치가 아니면 기본 사진을 새 것으로 바꾼다 — 내가 등록한 사진은 지킨다
+                    if (firstInstall && src == dst) continue
+                    if (dst == "templates" && name in mine) continue
+                    if (sameAsAsset(ctx, "$src/$name", out)) continue
+                    if (dst == "templates") backup(ctx, out)
+                }
                 try {
-                    ctx.assets.open("$folder/$name").use { ins ->
+                    ctx.assets.open("$src/$name").use { ins ->
                         out.outputStream().use { o -> ins.copyTo(o) }
                     }
                     n++
                 } catch (e: Exception) {
-                    Log.w("AssetInstaller", "복사 실패: $folder/$name", e)
+                    Log.w("AssetInstaller", "복사 실패: $src/$name", e)
                 }
             }
         }
         Prefs.setAssetsVersion(ctx, VERSION)
+        if (n > 0) TemplateStore.generation++
         return n
     }
+
+    private fun backup(ctx: Context, f: File) {
+        try { f.copyTo(File(File(ctx.filesDir, "templates_bak").apply { mkdirs() }, f.name), overwrite = true) }
+        catch (_: Exception) {}
+    }
+
+    /** 이미 같은 파일이면 다시 쓰지 않는다 */
+    private fun sameAsAsset(ctx: Context, path: String, f: File): Boolean = try {
+        ctx.assets.open(path).use { a ->
+            f.inputStream().buffered().use { b ->
+                var same = true
+                while (true) {
+                    val x = a.read(); val y = b.read()
+                    if (x != y) { same = false; break }
+                    if (x < 0) break
+                }
+                same
+            }
+        }
+    } catch (_: Exception) { false }
 
     /** 게임 위 표시용 보스 사진 파일 */
     fun displayFile(ctx: Context, boss: String): File = File(File(ctx.filesDir, "display"), "$boss.png")

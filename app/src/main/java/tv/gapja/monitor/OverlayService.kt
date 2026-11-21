@@ -226,6 +226,7 @@ class OverlayService : Service() {
     private fun buildStrip() {
         val v = BossStripView(uiCtx)
         strip = v
+        wrapShift = 0
         stripLp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -269,7 +270,9 @@ class OverlayService : Service() {
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    Prefs.setOverlayPos(this, lp.x, lp.y)
+                    // 줄바꿈 때문에 옮겨 둔 만큼을 빼고, '첫 줄' 자리를 저장한다
+                    if (Prefs.overlayVertical(this)) Prefs.setOverlayPos(this, lp.x + wrapShift, lp.y)
+                    else Prefs.setOverlayPos(this, lp.x, lp.y + wrapShift)
                     handle = 0
                     true
                 }
@@ -319,8 +322,9 @@ class OverlayService : Service() {
         len = max(dp(60), len)
         if ((h and (sizeEnd or sizeStart)) != 0) {
             Prefs.setOverlayMaxDp(this, (dd / dens).toInt())
-            // 사진을 키웠는데 줄 길이 때문에 자동 축소되면 안 커지므로, 길이도 같이 늘린다
-            if ((h and (lenEnd or lenStart)) == 0) len = max(len, v.lengthFor(dd))
+            // 자동 축소를 켠 경우에만: 사진을 키웠는데 줄 길이 때문에 축소되면 안 커지므로 길이도 같이 늘린다
+            // (자동 축소가 꺼져 있으면 크기는 그대로 두고 넘치는 사진은 다음 줄로 간다)
+            if (Prefs.autoShrink(this) && (h and (lenEnd or lenStart)) == 0) len = max(len, v.lengthFor(dd))
         }
         Prefs.setOverlayLengthDp(this, (len / dens).toInt())
         lp.x = newX; lp.y = newY
@@ -727,6 +731,27 @@ class OverlayService : Service() {
                     render()
                     if (bmp == null) {
                         Toast.makeText(this, "화면을 찍지 못했습니다. 다시 눌러 주세요", Toast.LENGTH_SHORT).show()
+                    } else if (!Prefs.cropRightAway(this)) {
+                        // 기본: 저장만 하고 게임에 그대로 머문다 (게임이 튕기지 않게)
+                        val mode = Bus.mode
+                        val hint = Bus.activated.lastOrNull()
+                        showLoading("📸 캡처 저장 중…")
+                        Thread {
+                            val f = Snaps.save(this, bmp, mode, hint)
+                            Backup.saveFullScreen(this, bmp, "캡처")
+                            val n = Snaps.count(this)
+                            bmp.recycle()
+                            main.post {
+                                hideLoading()
+                                if (f != null) {
+                                    showLoading("📸 캡처함에 저장 ($n 장)", spinner = false)
+                                    main.postDelayed({ hideLoading() }, 1100)
+                                    Bus.log("📸 캡처를 저장했습니다 (캡처함 ${n}장). 판이 끝나면 메인 화면 [📸 캡처함] 에서 잘라 등록하세요.")
+                                } else {
+                                    Toast.makeText(this, "캡처를 저장하지 못했습니다", Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }.start()
                     } else {
                         // 화면은 이미 찍혔으니 이제 안내를 띄워도 사진에 안 들어간다
                         showLoading("캡처 준비 중…")
@@ -757,7 +782,7 @@ class OverlayService : Service() {
     private var loading: View? = null
     private val hideLoadingRunnable = Runnable { hideLoading() }
 
-    private fun showLoading(text: String) {
+    private fun showLoading(text: String, spinner: Boolean = true) {
         hideLoading()
         val box = LinearLayout(uiCtx).apply {
             orientation = LinearLayout.VERTICAL
@@ -769,7 +794,7 @@ class OverlayService : Service() {
                 setStroke(dp(1), Color.parseColor("#991ABC9C"))
             }
         }
-        box.addView(android.widget.ProgressBar(uiCtx).apply {
+        if (spinner) box.addView(android.widget.ProgressBar(uiCtx).apply {
             isIndeterminate = true
             indeterminateTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#1ABC9C"))
         }, LinearLayout.LayoutParams(dp(44), dp(44)))
@@ -802,6 +827,12 @@ class OverlayService : Service() {
 
     // ── 그리기 ───────────────────────────────────────────────────
 
+    /**
+     * 사진이 한 줄에 다 안 들어가 둘째 줄이 생길 때, 화면 가장자리 쪽이면
+     * 창을 안쪽으로 옮겨서 줄이 화면 안쪽으로 늘어나게 한다. 그 옮긴 거리(px).
+     */
+    private var wrapShift = 0
+
     private fun render() {
         applyChipScale()
         applyStripTouchMode()
@@ -827,15 +858,25 @@ class OverlayService : Service() {
         val avail = if (lenDp > 0) dp(lenDp) else {
             if (vertical) sh - max(0, lp.y) - dp(24) else sw - max(0, lp.x) - dp(8)
         }
+        // 첫 줄의 자리(줄바꿈으로 옮기기 전) 가 화면 오른쪽(아래쪽) 절반에 있으면 줄을 안쪽(왼쪽·위쪽)으로 늘린다
+        val maxD = dp(Prefs.overlayMaxDp(this))
+        val anchor = if (vertical) lp.x + wrapShift else lp.y + wrapShift
+        val reverse = if (vertical) anchor + maxD / 2 > sw / 2 else anchor + maxD / 2 > sh / 2
         v.update(
             items = if (showAll || editing) items else emptyList(),
             vertical = vertical,
-            maxD = dp(Prefs.overlayMaxDp(this)),
+            maxD = maxD,
             lengthPx = max(dp(60), avail),
             shrink = Prefs.autoShrink(this),
             editing = editing,
-            highlightLast = !editing && Bus.activated.isNotEmpty()
+            highlightLast = !editing && Bus.activated.isNotEmpty(),
+            reverseLines = reverse
         )
+        val newShift = if (reverse) v.extraAcross() else 0
+        if (newShift != wrapShift) {
+            if (vertical) lp.x += wrapShift - newShift else lp.y += wrapShift - newShift
+            wrapShift = newShift
+        }
         v.visibility = if (items.isEmpty() && !editing) View.GONE else View.VISIBLE
         try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
     }
@@ -899,7 +940,7 @@ class OverlayService : Service() {
  * 라운드 글자 없이 보스 사진만, 사진끼리 거의 붙여서 그린다.
  *
  * 조절 모드에서는 테두리에 주황 점 8개(네 모서리 + 네 변 가운데)가 생긴다.
- *   • 줄 방향의 양 끝 점 → 줄 길이 (사진이 많을 때 자동 축소되는 길이)
+ *   • 줄 방향의 양 끝 점 → 줄 길이 (넘치면 다음 줄로 · 자동 축소를 켜면 축소 기준)
  *   • 줄과 직각인 양 옆 점 → 사진 크기
  *   • 모서리 점 → 둘 다
  */
@@ -917,6 +958,7 @@ class BossStripView(ctx: Context) : View(ctx) {
     private var shrink = true
     private var editing = false
     private var highlightLast = false
+    private var reverseLines = false
 
     /** 지금 그리는 사진 지름(px) */
     var d = maxD
@@ -940,13 +982,31 @@ class BossStripView(ctx: Context) : View(ctx) {
     }
 
     fun update(items: List<Item>, vertical: Boolean, maxD: Int, lengthPx: Int,
-               shrink: Boolean, editing: Boolean, highlightLast: Boolean) {
+               shrink: Boolean, editing: Boolean, highlightLast: Boolean, reverseLines: Boolean = false) {
         this.items = items; this.vertical = vertical; this.maxD = maxD
         this.lengthPx = lengthPx; this.shrink = shrink; this.editing = editing
-        this.highlightLast = highlightLast
+        this.highlightLast = highlightLast; this.reverseLines = reverseLines
         d = computeD()
         requestLayout(); invalidate()
     }
+
+    /**
+     * 한 줄에 놓을 사진 수.
+     * 자동 축소가 꺼져 있으면 크기를 줄이지 않고, 줄 길이를 넘는 사진은 다음 줄로 보낸다.
+     */
+    private fun perLine(): Int {
+        val n = max(1, items.size)
+        if (shrink) return n
+        return ((lengthPx + gap) / (d + gap)).coerceIn(1, n)
+    }
+
+    private fun lineCount(): Int {
+        val n = max(1, items.size); val per = perLine()
+        return (n + per - 1) / per
+    }
+
+    /** 둘째 줄부터 늘어난 폭(px) — 화면 가장자리 쪽이면 창을 이만큼 안쪽으로 옮긴다 */
+    fun extraAcross(): Int = if (items.isEmpty()) 0 else (lineCount() - 1) * (d + gap)
 
     fun itemCount(): Int = items.size
 
@@ -1005,9 +1065,11 @@ class BossStripView(ctx: Context) : View(ctx) {
             else setMeasuredDimension(1, 1)
             return
         }
-        val len = lengthFor(d, n)
-        if (vertical) setMeasuredDimension(d + pad * 2, len + pad * 2)
-        else setMeasuredDimension(len + pad * 2, d + pad * 2)
+        val len = lengthFor(d, perLine())
+        val lines = lineCount()
+        val across = lines * d + (lines - 1) * gap
+        if (vertical) setMeasuredDimension(across + pad * 2, len + pad * 2)
+        else setMeasuredDimension(len + pad * 2, across + pad * 2)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -1018,10 +1080,15 @@ class BossStripView(ctx: Context) : View(ctx) {
             }
             return
         }
+        val per = perLine()
+        val lines = lineCount()
         for ((i, it) in items.withIndex()) {
-            val off = i * (d + gap) + d / 2f
-            val cx = if (vertical) pad + d / 2f else pad + off
-            val cy = if (vertical) pad + off else pad + d / 2f
+            // 줄 번호 — 화면 가장자리 쪽이면 첫 줄이 바깥(오른쪽·아래)에, 다음 줄이 안쪽으로 쌓인다
+            val line = if (reverseLines) lines - 1 - i / per else i / per
+            val off = (i % per) * (d + gap) + d / 2f
+            val acr = line * (d + gap) + d / 2f
+            val cx = if (vertical) pad + acr else pad + off
+            val cy = if (vertical) pad + off else pad + acr
             circle(it.boss)?.let { bmp ->
                 canvas.drawBitmap(bmp, null, RectF(cx - d / 2f, cy - d / 2f, cx + d / 2f, cy + d / 2f), null)
             }

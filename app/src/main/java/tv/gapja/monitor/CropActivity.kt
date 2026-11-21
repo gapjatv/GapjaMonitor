@@ -222,6 +222,8 @@ class CropActivity : AppCompatActivity() {
      *   • 새로 등록 중이면 → 아직 등록 안 한 첫 항목
      */
     private fun defaultTarget(names: List<String>): String? {
+        // 캡처함에서 열었으면 그 캡처 때 인식된 보스를 먼저
+        intent.getStringExtra(EXTRA_HINT)?.let { if (it in names) return it }
         if (Bus.lobby) return names.firstOrNull { PcDefaults.isLobby(it) }
         Bus.activated.lastOrNull()?.let { if (it in names) return it }
         if (!Prefs.usePcTemplates(this)) {
@@ -272,6 +274,28 @@ class CropActivity : AppCompatActivity() {
             return
         }
         val boss = bossSpinner.selectedItem as? String ?: return
+        // '기본 사진 교체' 인데 이미 사진이 있으면 한 번 더 묻는다 (잘못 눌러 원본을 덮지 않게)
+        if (!asExtra) {
+            val base = if (mode == GameMode.INVASION && !PcDefaults.isLobby(boss))
+                "${TemplateStore.INVASION_PREFIX}$boss.png" else "$boss.png"
+            if (TemplateStore(this).exists(base)) {
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("기본 사진을 바꿀까요?")
+                    .setMessage("'${base.removeSuffix(".png")}' 의 지금 사진을 이 사진으로 바꿉니다.\n\n" +
+                            "이전 사진은 보관해 두므로 '저장된 보스 사진 보기' 에서 그 사진을 길게 눌러 " +
+                            "'이전 사진으로 되돌리기' 로 복구할 수 있습니다.\n\n" +
+                            "기존 사진은 그대로 두고 추가만 하려면 '보조 사진 추가' 를 고르세요.")
+                    .setPositiveButton("바꾸기") { _, _ -> doSave(crop, boss) }
+                    .setNeutralButton("보조 사진으로 추가") { _, _ -> asExtra = true; doSave(crop, boss) }
+                    .setNegativeButton("취소", null)
+                    .show()
+                return
+            }
+        }
+        doSave(crop, boss)
+    }
+
+    private fun doSave(crop: Bitmap, boss: String) {
         val name = TemplateStore(this).saveCrop(normalized(crop), boss, mode, asExtra)
         if (name == null) {
             Toast.makeText(this, "저장하지 못했습니다", Toast.LENGTH_SHORT).show()
@@ -279,13 +303,35 @@ class CropActivity : AppCompatActivity() {
         }
         Bus.log("✂️ [사진 등록] '$name' 저장 (${crop.width}×${crop.height}, ${mode.label}) — 바로 인식에 쓰입니다. " +
                 "사진첩 › 운빨보스알림 에도 넣었습니다.")
-        // 자르기 전 전체 화면도 사진첩에 남긴다 (나중에 다시 자르거나 기본 사진으로 모을 때)
-        source?.let { Backup.saveFullScreen(this, it, name.removeSuffix(".png")) }
+        val fromSnap = intent.getStringExtra(EXTRA_PATH) != null
+        // 자르기 전 전체 화면도 사진첩에 남긴다 (캡처함에서 연 화면은 캡처할 때 이미 남겼다)
+        if (!fromSnap) source?.let { Backup.saveFullScreen(this, it, name.removeSuffix(".png")) }
         Toast.makeText(this, "$name 저장했습니다", Toast.LENGTH_SHORT).show()
-        finish()
+        if (fromSnap) {
+            // 캡처함 화면 한 장에 보스가 여럿 있을 수 있으니 이어서 자를지 묻는다
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("저장했습니다")
+                .setMessage("이 화면에서 다른 보스(로비)도 잘라 넣을까요?")
+                .setPositiveButton("더 자르기", null)
+                .setNegativeButton("끝내기") { _, _ -> finish() }
+                .setCancelable(false)
+                .show()
+        } else finish()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        Bus.cropVisible = true
+    }
+
+    override fun onPause() {
+        Bus.cropVisible = false
+        Bus.cropClosedAt = System.currentTimeMillis()
+        super.onPause()
     }
 
     override fun onDestroy() {
+        Bus.cropVisible = false
         try { source?.recycle() } catch (_: Exception) {}
         source = null
         super.onDestroy()
@@ -296,6 +342,7 @@ class CropActivity : AppCompatActivity() {
         @Volatile var pendingBitmap: Bitmap? = null
 
         const val EXTRA_FROM_MEMORY = "mem"
+        const val EXTRA_HINT = "hint"
         const val EXTRA_PATH = "path"
         const val EXTRA_URI = "uri"
         const val EXTRA_MODE = "mode"

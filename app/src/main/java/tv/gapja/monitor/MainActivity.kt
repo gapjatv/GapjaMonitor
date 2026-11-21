@@ -52,6 +52,7 @@ class MainActivity : AppCompatActivity() {
     private var mode = GameMode.INVASION
     private var modeBtn: Button? = null
     private var sourceView: TextView? = null
+    private var snapsBtn: Button? = null
     private var methodView: TextView? = null
     private var projBtn: Button? = null
     private var a11yBtn: Button? = null
@@ -445,7 +446,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(check("침공 특수보스 사진 표시  (끄면 사진만 숨김, 인식·80R 안내는 그대로)", Prefs.showSpecial(this)) {
             Prefs.setShowSpecial(this, it); Bus.settingsChanged()
         })
-        col.addView(check("자동 축소  (보스가 늘면 사진을 줄여 다 보이게)", Prefs.autoShrink(this)) {
+        col.addView(check("자동 축소  (끄면 정한 크기 그대로 · 넘치면 다음 줄로 · 기본 끔)", Prefs.autoShrink(this)) {
             Prefs.setAutoShrink(this, it); Bus.settingsChanged()
         })
         col.addView(check("사진 터치 통과  (켜면 사진 위도 게임이 눌림 · 끄면 사진을 손가락으로 끌어 옮김)",
@@ -481,6 +482,13 @@ class MainActivity : AppCompatActivity() {
                 Uri.parse("package:$packageName")))
         })
 
+        // ── 발열 줄이기 ──
+        col.addView(h("발열 줄이기"))
+        col.addView(check("발열 줄이기 (절전) — 켜 두는 것을 권장", Prefs.powerSave(this)) { Prefs.setPowerSave(this, it) })
+        col.addView(body("검사를 최소 0.3초 간격으로, 보스를 찾은 직후와 로비에서는 더 천천히 합니다. " +
+                "직접 등록한 사진은 크기 비교를 줄여 계산량을 3분의 1 정도로 낮춥니다. " +
+                "그래도 뜨거우면 고급 설정에서 '화면 축소' 를 40% 로 낮춰 보세요."))
+
         // ── 음성 ──
         col.addView(h("음성"))
         col.addView(check("보스 인식 음성", Prefs.voiceEnabled(this)) { Prefs.setVoiceEnabled(this, it) })
@@ -503,6 +511,10 @@ class MainActivity : AppCompatActivity() {
         col.addView(sourceView)
         sourceBtn = btn("", "#8E44AD") { askTemplateSource() }
         col.addView(sourceBtn)
+        snapsBtn = btn("", "#16A085") { startActivity(Intent(this, SnapsActivity::class.java)) }
+        col.addView(snapsBtn)
+        col.addView(check("캡처하면 바로 자르기 화면 열기  (끄면 캡처함에 저장만 하고 게임에 머묾 · 게임 튕김 방지)",
+            Prefs.cropRightAway(this)) { Prefs.setCropRightAway(this, it) })
         col.addView(row(
             btn("📦 지금 백업", "#2C3E50") {
                 val n = Backup.saveAll(this)
@@ -893,6 +905,7 @@ class MainActivity : AppCompatActivity() {
             (if (Bus.overlayDisplay >= 0) " · 보스 사진 표시: 화면 #${Bus.overlayDisplay}" else "")
         else
             "♿ 접근성 — 아직 꺼져 있음. 아래 [접근성 켜러 가기] 로 한 번만 켜 주세요."
+        snapsBtn?.text = "📸 캡처함 (${Snaps.count(this)}장) — 게임 중 찍은 화면을 잘라 등록"
         val gal = Prefs.pickFromGallery(this)
         addBtn?.text = if (gal) "📷 사진 추가 — 사진첩에서 스크린샷 골라 보스·로비 잘라 넣기"
         else "📁 사진 추가 — 파일에서 잘라 둔 PNG 가져오기"

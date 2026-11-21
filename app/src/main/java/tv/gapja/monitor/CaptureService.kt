@@ -328,7 +328,7 @@ class CaptureService : Service() {
                     } else {
                         try { processBitmap(bmp, startedAt) } catch (e: Exception) { Log.w(TAG, "분석 오류", e) }
                     }
-                    if (running && viaA11y) handlerOn().postDelayed(this, a11yGapMs)
+                    if (running && viaA11y) handlerOn().postDelayed(this, nextDelay(a11yGapMs))
                 }
             }
         }
@@ -455,7 +455,26 @@ class CaptureService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "스캔 중 오류", e)
             }
-            if (running) handlerOn().postDelayed(this, intervalMs)
+            if (running) handlerOn().postDelayed(this, nextDelay(intervalMs))
+        }
+    }
+
+    /** 보스를 마지막으로 찾은 시각 (발열 줄이기: 찾은 직후에는 천천히) */
+    private var lastFoundAt = 0L
+
+    /**
+     * 다음 검사까지 쉴 시간 — 발열 줄이기가 켜져 있으면 상황에 따라 늘린다.
+     *   • 로비에 있거나 자르기 화면이 떠 있음 → 1초
+     *   • 보스를 찾은 지 8초 안 (다음 보스는 한참 뒤에 나온다) → 3배
+     *   • 평소 → 최소 0.3초
+     */
+    private fun nextDelay(base: Long): Long {
+        if (!Prefs.powerSave(this)) return base
+        val now = System.currentTimeMillis()
+        return when {
+            inLobby || Bus.cropVisible || paused -> max(base, 1000L)
+            now - lastFoundAt < 8000 -> max(base, 300L) * 3
+            else -> max(base, 300L)
         }
     }
 
@@ -496,6 +515,9 @@ class CaptureService : Service() {
     private fun analyze(scr: Mat) {
         try {
             val now = System.currentTimeMillis()
+
+            // 자르기 화면이 떠 있는 동안은 쉰다 (그 화면 속 게임 사진을 진짜 게임으로 착각하지 않게)
+            if (Bus.cropVisible) return
 
             // ① 로비 화면 — 인식되면 모드를 맞추고 보스 사진을 초기화한다
             if (now >= lobbyNextCheck) {
@@ -543,6 +565,8 @@ class CaptureService : Service() {
      *
      * @return 로비가 보였으면 true (이번 프레임은 보스 검사를 건너뛴다)
      */
+    private var graceLogged = false
+
     private fun checkLobby(scr: Mat, now: Long): Boolean {
         for ((lobby, lobbyMode) in listOf(
             PcDefaults.LOBBY_NORMAL to GameMode.NORMAL,
@@ -576,6 +600,16 @@ class CaptureService : Service() {
                 }
                 updateNotification("감시 중 · ${newMode.label} (${PcDefaults.speedLabel(newMode, Prefs.speedLock(this))})")
             }
+            // 자르기 화면에서 막 돌아온 직후(15초)에는 로비가 잠깐 보여도 보스를 지우지 않는다
+            // (게임이 다시 접속하면서 로비를 잠깐 보여 주는 경우가 있어서)
+            if (session.activationOrder.isNotEmpty() && now - Bus.cropClosedAt < CROP_GRACE_MS) {
+                if (!graceLogged) {
+                    graceLogged = true
+                    Bus.log("🛡 캡처 화면에서 돌아오는 중이라 로비가 보여도 보스 사진을 그대로 둡니다.")
+                }
+                return true
+            }
+            graceLogged = false
             if (session.activationOrder.isNotEmpty()) {
                 Bus.log(if (lobbyMode == null)
                     "🏠 [$lobby 인식 → ${newMode.label} 모드 유지] 보스 사진을 초기화합니다. (정확도 ${pct(best)})"
@@ -639,7 +673,10 @@ class CaptureService : Service() {
         else BossCatalog.threshold(name, session.mode, Prefs.thresholds(this))
         val strict = BossCatalog.isStrict(name, Prefs.strictBosses(this))
 
-        var out = matcher.multiScale(scr, tpl, th, downscale = downscale)
+        // 발열 줄이기: 이 기기에서 직접 등록한 사진은 크기가 거의 같으므로 크기 비교를 3단계만 한다
+        val scales = if (Prefs.powerSave(this) && templates.bossFileIsUser(name, session.mode))
+            NARROW_SCALES else BossCatalog.SCALES
+        var out = matcher.multiScale(scr, tpl, th, scales = scales, downscale = downscale)
         var ok = out.score >= th
         var tileEdge = -1.0
 
@@ -721,6 +758,7 @@ class CaptureService : Service() {
         Bus.onState(session, seq)
         speaker.sayBoss(name)
         scheduleWarning(name, session.mode)
+        lastFoundAt = System.currentTimeMillis()
 
         // 침공특수보스 2종이 모이면 80R 확정 — 확률이 아니라 소거법이라 100%다
         val target = session.tryDeduce80R()
@@ -1005,6 +1043,12 @@ class CaptureService : Service() {
         const val ACTION_EXIT = "tv.gapja.monitor.EXIT"
         const val ACTION_PAUSE = "tv.gapja.monitor.PAUSE"
         const val ACTION_RESUME = "tv.gapja.monitor.RESUME"
+
+        /** 자르기 화면을 닫은 뒤 로비 초기화를 미루는 시간 */
+        private const val CROP_GRACE_MS = 15_000L
+
+        /** 직접 등록한 사진용 좁은 크기 범위 (같은 기기·1080 기준이라 거의 1배) */
+        private val NARROW_SCALES = doubleArrayOf(1.0, 0.93, 1.07)
 
         /** 로비가 이 시간 동안 안 보여야 로비를 벗어난 것으로 본다 */
         private const val LOBBY_EXIT_MS = 2500L

@@ -166,10 +166,12 @@ object Prefs {
         sp(ctx).edit().putBoolean("ov_special", on).apply()
 
     /** 보스가 늘면 사진을 줄여서 정해 둔 길이 안에 전부 보이게 한다 */
-    fun autoShrink(ctx: Context): Boolean = sp(ctx).getBoolean("ov_shrink", true)
+    // 기본은 끔 — 내가 정한 크기를 그대로 지키고, 넘치면 줄을 바꿔 다 보이게 한다
+    // (예전 키 ov_shrink 는 기본이 켬이라 너무 작아지는 문제가 있어 새 키로 바꿨다)
+    fun autoShrink(ctx: Context): Boolean = sp(ctx).getBoolean("ov_shrink2", false)
 
     fun setAutoShrink(ctx: Context, on: Boolean) =
-        sp(ctx).edit().putBoolean("ov_shrink", on).apply()
+        sp(ctx).edit().putBoolean("ov_shrink2", on).apply()
 
     /** 사진 배치 — true 면 세로로 쌓고, false 면 가로로 늘어놓는다 */
     fun overlayVertical(ctx: Context): Boolean = sp(ctx).getBoolean("ov_vertical", true)
@@ -282,6 +284,11 @@ object Prefs {
 
     fun clearUserTemplates(ctx: Context) = sp(ctx).edit().remove("user_tpls").apply()
 
+    fun removeUserTemplate(ctx: Context, name: String) {
+        val set = userTemplates(ctx).toMutableSet(); set.remove(name)
+        sp(ctx).edit().putStringSet("user_tpls", set).apply()
+    }
+
     /** 보스 사진 줄 터치 통과 — 켜면 사진 위를 눌러도 게임이 눌리고(사진 고정), 끄면 사진을 끌어서 옮길 수 있다 */
     fun stripPassThrough(ctx: Context): Boolean = sp(ctx).getBoolean("strip_pass", false)
 
@@ -302,6 +309,24 @@ object Prefs {
     fun gamePackage(ctx: Context): String? = sp(ctx).getString("game_pkg", null)
 
     fun setGamePackage(ctx: Context, pkg: String?) = sp(ctx).edit().putString("game_pkg", pkg).apply()
+
+    /**
+     * [캡처] 후 바로 자르기 화면을 열지.
+     * 기본은 끔 — 캡처만 '캡처함' 에 저장하고 게임 화면에 그대로 머문다.
+     * (게임을 벗어나면 게임이 튕기거나 다시 접속되면서 인식한 보스가 초기화되는 일이 있어서)
+     */
+    fun cropRightAway(ctx: Context): Boolean = sp(ctx).getBoolean("crop_now", false)
+
+    fun setCropRightAway(ctx: Context, on: Boolean) = sp(ctx).edit().putBoolean("crop_now", on).apply()
+
+    /**
+     * 발열 줄이기(절전) — 기본 켬.
+     *   • 검사 간격을 최소 0.3초로   • 내가 등록한 사진은 크기 비교를 3단계만
+     *   • 보스를 찾은 뒤 8초, 로비에 있는 동안은 천천히 검사
+     */
+    fun powerSave(ctx: Context): Boolean = sp(ctx).getBoolean("power_save", true)
+
+    fun setPowerSave(ctx: Context, on: Boolean) = sp(ctx).edit().putBoolean("power_save", on).apply()
 
     /** [사진 추가] 를 누르면 사진첩에서 고를지(기본) 파일에서 고를지 */
     fun pickFromGallery(ctx: Context): Boolean = sp(ctx).getBoolean("pick_gallery", true)

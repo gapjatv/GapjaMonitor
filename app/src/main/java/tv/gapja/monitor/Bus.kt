@@ -50,6 +50,16 @@ object Bus {
     @Volatile var gameDisplay: Int = 0
     @Volatile var gameLabel: String? = null
 
+    /**
+     * 자르기 화면이 열려 있는지.
+     * 자르기 화면에 게임 사진(로비·보스)이 크게 보이므로, 그동안은 인식을 쉰다.
+     * (안 쉬면 로비 사진을 자르는 중에 '로비 인식 → 보스 초기화' 가 일어났다)
+     */
+    @Volatile var cropVisible: Boolean = false
+
+    /** 자르기 화면을 닫은 시각 — 게임으로 돌아오는 동안 로비가 잠깐 보여도 보스를 지우지 않으려고 */
+    @Volatile var cropClosedAt: Long = 0L
+
     /** 오버레이(보스 사진·버튼)가 지금 붙어 있는 화면 번호 */
     @Volatile var overlayDisplay: Int = -1
 

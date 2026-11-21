@@ -64,6 +64,12 @@
             android:taskAffinity=""
             android:theme="@style/Theme.Gapja.Transparent" />
 
+        <!-- 캡처함 — 게임 중 저장한 화면을 나중에 잘라 등록 -->
+        <activity
+            android:name=".SnapsActivity"
+            android:exported="false"
+            android:label="캡처함" />
+
         <!-- 저장된 보스 사진 · 로비 화면 보기 -->
         <activity
             android:name=".GalleryActivity"

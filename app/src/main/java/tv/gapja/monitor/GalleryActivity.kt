@@ -90,6 +90,11 @@ class GalleryActivity : AppCompatActivity() {
         }
         val normal = all.filter { it !in lobbies && it !in speeds && it !in extras && it !in inv }
 
+        col.addView(TextView(this).apply {
+            text = "※ 인식용 사진을 길게 누르면 지우기 · 이전 사진으로 되돌리기 · 앱 기본 사진으로 되돌리기"
+            setTextColor(Color.parseColor("#FFF39C12")); textSize = 12f
+            setPadding(0, dp(12), 0, 0)
+        })
         section(col, "로비 화면 (인식되면 보스 사진 초기화)", lobbies, "아직 없습니다. 자르기 화면에서 '태초로비 · 침공로비 · 공통로비' 를 골라 넣어 주세요.")
         section(col, "인식용 사진 · 태초 보스", normal, null)
         section(col, "인식용 사진 · 침공 보스 (침공_)", inv, null)
@@ -140,9 +145,45 @@ class GalleryActivity : AppCompatActivity() {
                 gravity = Gravity.CENTER
                 maxLines = 2
             })
+            // 인식용 사진은 길게 누르면 지우기·되돌리기
+            if (f.parentFile?.name == "templates") box.setOnLongClickListener { manage(f); true }
             grid.addView(box, GridLayout.LayoutParams().apply { width = itemW })
         }
         col.addView(grid)
+    }
+
+    /**
+     * 인식용 사진 관리 — 지우기 / 이전 사진으로 되돌리기 / 앱 기본 사진으로 되돌리기.
+     * 잘못 누르지 않게 고른 뒤 한 번 더 확인한다.
+     */
+    private fun manage(f: File) {
+        val store = TemplateStore(this)
+        val name = f.name
+        val actions = ArrayList<Pair<String, () -> Boolean>>()
+        if (store.hasPrevious(name)) actions.add("이전 사진으로 되돌리기" to { store.restorePrevious(name) })
+        if (store.hasBundled(name) && name in Prefs.userTemplates(this))
+            actions.add("앱 기본 사진으로 되돌리기" to { store.restoreBundled(name) })
+        actions.add("이 사진 지우기" to { store.delete(name) })
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(name.removeSuffix(".png"))
+            .setItems(actions.map { it.first }.toTypedArray()) { _, which ->
+                val (label, act) = actions[which]
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("정말 할까요?")
+                    .setMessage("'${name.removeSuffix(".png")}' — $label\n\n" +
+                            "바뀌기 전 사진은 보관해 두므로 '이전 사진으로 되돌리기' 로 다시 복구할 수 있습니다.")
+                    .setPositiveButton("확인") { _, _ ->
+                        val ok = act()
+                        android.widget.Toast.makeText(this, if (ok) "$label 완료" else "실패했습니다",
+                            android.widget.Toast.LENGTH_SHORT).show()
+                        if (ok) Bus.log("🗂 [사진 관리] ${name.removeSuffix(".png")} — $label")
+                        recreate()
+                    }
+                    .setNegativeButton("취소", null)
+                    .show()
+            }
+            .setNegativeButton("닫기", null)
+            .show()
     }
 
     /** 미리보기용으로 작게 읽는다 (메모리 절약) */
