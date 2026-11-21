@@ -56,6 +56,7 @@ class MainActivity : AppCompatActivity() {
     private var projBtn: Button? = null
     private var a11yBtn: Button? = null
     private var a11yOnBtn: Button? = null
+    private var findGameBtn: Button? = null
     private var addBtn: Button? = null
     private var addWhereBtn: Button? = null
     private var sourceBtn: Button? = null
@@ -375,6 +376,12 @@ class MainActivity : AppCompatActivity() {
         col.addView(row(projBtn!!, a11yBtn!!))
         a11yOnBtn = btn("⚙️ 접근성 켜러 가기", "#8E44AD") { showA11yGuide() }
         col.addView(a11yOnBtn)
+        findGameBtn = btn("🔍 게임 화면 다시 찾기", "#2A3644") {
+            BossA11yService.forgetGame(this)
+            toast("게임(운빨존많겜)을 켜 두면 자동으로 다시 찾습니다")
+            refresh()
+        }
+        col.addView(findGameBtn)
 
         // ── 모드 · 배속 (PC판처럼 버튼 하나씩) ──
         col.addView(h("모드 · 배속"))
@@ -848,11 +855,14 @@ class MainActivity : AppCompatActivity() {
         projBtn?.setBackgroundColor(Color.parseColor(if (!a11y) "#1ABC9C" else "#3C4B5A"))
         a11yBtn?.setBackgroundColor(Color.parseColor(if (a11y) "#1ABC9C" else "#3C4B5A"))
         a11yOnBtn?.visibility = if (a11y && !a11yOn) View.VISIBLE else View.GONE
+        findGameBtn?.visibility = if (a11y && a11yOn) View.VISIBLE else View.GONE
         methodView?.text = if (!a11y)
             "📺 화면 공유 — 가장 빠름 (0.15초마다). [시작] 할 때 '화면을 공유하시겠습니까?' 확인창이 뜹니다.\n" +
             "뮤뮤플레이어에서 화면이 어두워지고 멈추면 → 뒤로가기 → '접근성' 을 고르세요."
         else if (a11yOn)
-            "♿ 접근성 — 켜져 있음 ✔. 확인창 없이 바로 시작합니다. (약 0.4초마다 확인)"
+            "♿ 접근성 — 켜져 있음 ✔. 확인창 없이 바로 시작합니다. (약 0.4초마다 확인)\n" +
+            "감시 화면: " + (Bus.gameLabel?.let { "$it (화면 #${Bus.gameDisplay})" }
+                ?: "게임을 켜면 자동으로 찾아서 그 화면(뮤뮤 탭)에 보스 사진을 띄웁니다")
         else
             "♿ 접근성 — 아직 꺼져 있음. 아래 [접근성 켜러 가기] 로 한 번만 켜 주세요."
         val gal = Prefs.pickFromGallery(this)

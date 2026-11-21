@@ -13,8 +13,8 @@ android {
         // 화면 캡처(MediaProjection)와 포그라운드 서비스 타입이 필요하므로 최소 29.
         minSdk = 29
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.5"
+        versionCode = 7
+        versionName = "1.6"
 
         // 어떤 ABI 를 담을지는 아래 splits 에서 정한다 (기기 종류별 APK)
     }

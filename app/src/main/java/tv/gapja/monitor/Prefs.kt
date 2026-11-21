@@ -298,6 +298,11 @@ object Prefs {
 
     fun setUseA11y(ctx: Context, on: Boolean) = sp(ctx).edit().putBoolean("use_a11y", on).apply()
 
+    /** 찾아 둔 게임 앱 (운빨존많겜) — 다른 화면(뮤뮤 탭)에서도 게임 창을 알아보는 데 쓴다 */
+    fun gamePackage(ctx: Context): String? = sp(ctx).getString("game_pkg", null)
+
+    fun setGamePackage(ctx: Context, pkg: String?) = sp(ctx).edit().putString("game_pkg", pkg).apply()
+
     /** [사진 추가] 를 누르면 사진첩에서 고를지(기본) 파일에서 고를지 */
     fun pickFromGallery(ctx: Context): Boolean = sp(ctx).getBoolean("pick_gallery", true)
 

@@ -46,6 +46,21 @@ object Bus {
 
     var onLog: ((String) -> Unit)? = null
 
+    /** 게임 창이 있는 화면 번호와 앱 이름 (뮤뮤 탭 대응) */
+    @Volatile var gameDisplay: Int = 0
+    @Volatile var gameLabel: String? = null
+
+    /** 게임 화면이 바뀌면 오버레이를 그 화면으로 옮긴다 */
+    var onGameDisplay: ((Int) -> Unit)? = null
+
+    fun setGameDisplay(display: Int, label: String) {
+        gameDisplay = display; gameLabel = label
+        main.post {
+            try { onGameDisplay?.invoke(display) } catch (_: Exception) {}
+            fireChange()
+        }
+    }
+
     /** 자르기 화면이 열리면 게임 위 '캡처 준비 중…' 안내를 닫는다 */
     var onCropOpened: (() -> Unit)? = null
 

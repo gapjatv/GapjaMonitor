@@ -276,6 +276,8 @@ class CaptureService : Service() {
     private var viaA11y = false
     /** 지금 화면을 찍는 중인지 (한 번에 한 장만) */
     private var a11yBusy = false
+    /** 접근성 루프 횟수 (게임 화면을 아직 못 찾았으면 가끔 다시 찾는다) */
+    private var a11yRounds = 0
     /** 접근성 화면 찍기 간격 — 안드로이드가 거절하면 늘린다 */
     private var a11yGapMs = 400L
     /** [캡처] 를 누른 시각 — 그 뒤에 찍기 시작한 화면만 캡처로 쓴다 (사진 줄이 찍히지 않게) */
@@ -292,6 +294,9 @@ class CaptureService : Service() {
         session.mode = mode
         viaA11y = true
         a11yBusy = false
+        a11yRounds = 0
+        // 게임이 어느 화면(뮤뮤 탭)에 있는지 먼저 찾는다
+        BossA11yService.instance?.findGame()
         a11yGapMs = max(A11Y_MIN_GAP_MS, intervalMs)
         markStarted(mode)
         Bus.log("▶ 감시를 시작했습니다. (접근성 · 확인창 없음, 약 ${a11yGapMs}ms 간격, 템플릿 ${templates.count()}장)")
@@ -310,6 +315,7 @@ class CaptureService : Service() {
                 return
             }
             a11yBusy = true
+            if (++a11yRounds % 8 == 0 && BossA11yService.gamePackage == null) svc.findGame()
             val startedAt = System.currentTimeMillis()
             svc.grab { bmp, err ->
                 handlerOn().post {

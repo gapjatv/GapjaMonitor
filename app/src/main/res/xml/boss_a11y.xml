@@ -1,13 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
     접근성 방식 화면 읽기 설정.
-    화면을 찍는 기능(canTakeScreenshot)만 쓴다. 화면 글자 읽기·다른 앱 조작은 하지 않는다.
+    • 화면 찍기(canTakeScreenshot): 게임 화면의 보스를 인식
+    • 창 목록(flagRetrieveInteractiveWindows, canRetrieveWindowContent): 게임 창이 어느 화면(뮤뮤 탭)에 있는지 찾기
+    다른 앱을 조작하지 않고, 찍은 화면은 폰 안에서만 비교한다.
 -->
 <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
     android:description="@string/a11y_desc"
     android:summary="@string/a11y_summary"
-    android:accessibilityEventTypes="typeWindowStateChanged"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowsChanged"
     android:accessibilityFeedbackType="feedbackGeneric"
-    android:notificationTimeout="1000"
-    android:canRetrieveWindowContent="false"
+    android:accessibilityFlags="flagRetrieveInteractiveWindows"
+    android:notificationTimeout="500"
+    android:canRetrieveWindowContent="true"
     android:canTakeScreenshot="true" />

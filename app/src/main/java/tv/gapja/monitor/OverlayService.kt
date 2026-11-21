@@ -73,28 +73,85 @@ class OverlayService : Service() {
 
     private val listener: () -> Unit = { render() }
 
+    /** 뷰를 만들 때 쓰는 화면 — 게임이 다른 화면(뮤뮤 탭)에 있으면 그 화면용 */
+    private var uiCtx: Context = this
+    /** 접근성 창으로 띄우는 중인지 (다른 화면에도 띄울 수 있고, '다른 앱 위에 표시' 권한이 필요 없다) */
+    private var useA11yWin = false
+    /** 지금 오버레이가 붙어 있는 화면 번호 */
+    private var shownDisplay = -1
+
     override fun onCreate() {
         super.onCreate()
-        if (!canDraw(this)) {
+        if (!Prefs.overlayEnabled(this)) { stopSelf(); return }
+        if (!pickWindowManager(Bus.gameDisplay)) {
             Bus.log("⚠️ 오버레이 권한이 없어 화면 위 표시를 건너뜁니다. " +
                     "(메인 화면의 '오버레이 권한' 버튼으로 허용할 수 있습니다)")
             stopSelf(); return
         }
-        if (!Prefs.overlayEnabled(this)) { stopSelf(); return }
-        wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
         buildStrip()
         buildChip()
         Bus.addChangeListener(listener)
         Bus.onCropOpened = { hideLoading() }
+        // 게임이 다른 화면(뮤뮤 탭)으로 옮겨 가면 오버레이도 따라간다
+        Bus.onGameDisplay = { d -> moveToDisplay(d) }
         render()
+    }
+
+    /**
+     * 어느 화면에 어떤 종류의 창으로 띄울지 정한다.
+     *   • 접근성이 켜져 있으면: 접근성 창(TYPE_ACCESSIBILITY_OVERLAY) 으로 게임이 있는 화면에 띄운다.
+     *     뮤뮤처럼 탭마다 화면이 따로인 환경에서도 게임 탭 위에 보인다.
+     *   • 아니면: 일반 오버레이(다른 앱 위에 표시) 로 기본 화면에 띄운다.
+     * @return 띄울 수 있으면 true
+     */
+    private fun pickWindowManager(display: Int): Boolean {
+        val svc = BossA11yService.instance
+        if (svc != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val dm = svc.getSystemService(android.hardware.display.DisplayManager::class.java)
+                val disp = dm.getDisplay(display) ?: dm.getDisplay(android.view.Display.DEFAULT_DISPLAY)
+                val wctx = svc.createDisplayContext(disp)
+                    .createWindowContext(WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY, null)
+                uiCtx = wctx
+                wm = wctx.getSystemService(WindowManager::class.java)
+                useA11yWin = true
+                shownDisplay = disp.displayId
+                return true
+            } catch (e: Exception) {
+                Bus.log("⚠️ 화면 #$display 에 띄우지 못해 기본 화면에 띄웁니다. (${e.javaClass.simpleName})")
+            }
+        }
+        if (!canDraw(this)) return false
+        uiCtx = this
+        wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        useA11yWin = false
+        shownDisplay = android.view.Display.DEFAULT_DISPLAY
+        return true
+    }
+
+    /** 게임이 있는 화면으로 오버레이를 옮긴다 (창을 떼었다가 그 화면에 다시 붙인다) */
+    private fun moveToDisplay(display: Int) {
+        if (display == shownDisplay && (useA11yWin || BossA11yService.instance == null)) return
+        if (editing) { editing = false; hidePanel() }
+        hideLoading()
+        try { strip?.let { wm?.removeView(it) } } catch (_: Exception) {}
+        try { chip?.let { wm?.removeView(it) } } catch (_: Exception) {}
+        strip = null; chip = null
+        chipScaleApplied = -1
+        if (!pickWindowManager(display)) { stopSelf(); return }
+        buildStrip()
+        buildChip()
+        render()
+        Bus.log("🪟 보스 사진·[보스설정] 을 화면 #$shownDisplay 에 띄웠습니다.")
     }
 
     private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
 
-    private fun overlayType(): Int =
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-        else @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+    private fun overlayType(): Int = when {
+        useA11yWin -> WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.O -> WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+        else -> @Suppress("DEPRECATION") WindowManager.LayoutParams.TYPE_PHONE
+    }
 
     private fun screenSize(): Pair<Int, Int> {
         val w = wm ?: return resources.displayMetrics.widthPixels to resources.displayMetrics.heightPixels
@@ -119,7 +176,7 @@ class OverlayService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun buildStrip() {
-        val v = BossStripView(this)
+        val v = BossStripView(uiCtx)
         strip = v
         stripLp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -240,11 +297,11 @@ class OverlayService : Service() {
 
     @SuppressLint("ClickableViewAccessibility")
     private fun buildChip() {
-        val box = LinearLayout(this).apply {
+        val box = LinearLayout(uiCtx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
         }
-        val mainBtn = TextView(this).apply {
+        val mainBtn = TextView(uiCtx).apply {
             text = "보스설정"
             setTextColor(Color.WHITE)
             setTypeface(typeface, Typeface.BOLD)
@@ -258,12 +315,12 @@ class OverlayService : Service() {
         chipMain = mainBtn
         box.addView(mainBtn)
 
-        val menu = LinearLayout(this).apply {
+        val menu = LinearLayout(uiCtx).apply {
             orientation = LinearLayout.VERTICAL
             visibility = View.GONE
             setPadding(0, dp(4), 0, 0)
         }
-        fun menuBtn(text: String, color: String, action: () -> Unit) = TextView(this).apply {
+        fun menuBtn(text: String, color: String, action: () -> Unit) = TextView(uiCtx).apply {
             this.text = text
             setTextColor(Color.WHITE)
             setTypeface(typeface, Typeface.BOLD)
@@ -466,7 +523,7 @@ class OverlayService : Service() {
 
     private fun showPanel() {
         if (panel != null) return
-        val box = LinearLayout(this).apply {
+        val box = LinearLayout(uiCtx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(12), dp(14), dp(12))
             background = GradientDrawable().apply {
@@ -475,19 +532,19 @@ class OverlayService : Service() {
                 setStroke(dp(1), Color.parseColor("#661ABC9C"))
             }
         }
-        fun label(t: String) = TextView(this).apply {
+        fun label(t: String) = TextView(uiCtx).apply {
             text = t; setTextColor(Color.WHITE); textSize = 13f
             setTypeface(typeface, Typeface.BOLD)
         }
-        box.addView(TextView(this).apply {
+        box.addView(TextView(uiCtx).apply {
             text = "사진 줄을 끌면 이동 · 테두리 주황 점(상하좌우·모서리)을 끌면 길이·크기 조절"
             setTextColor(Color.parseColor("#F39C12")); textSize = 12f
         })
 
         // 배치
-        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        val row = LinearLayout(uiCtx).apply { orientation = LinearLayout.HORIZONTAL }
         row.addView(label("배치  "))
-        val hBtn = Button(this); val vBtn = Button(this)
+        val hBtn = Button(uiCtx); val vBtn = Button(uiCtx)
         fun syncLayoutBtns() {
             val vert = Prefs.overlayVertical(this)
             vBtn.setBackgroundColor(Color.parseColor(if (vert) "#1ABC9C" else "#3C4B5A"))
@@ -510,7 +567,7 @@ class OverlayService : Service() {
         fun syncSize() { sizeLabel.text = "사진 최대 크기: ${Prefs.overlayMaxDp(this)}dp" }
         syncSize()
         box.addView(sizeLabel)
-        box.addView(SeekBar(this).apply {
+        box.addView(SeekBar(uiCtx).apply {
             setMax(160 - 20)
             setProgress(Prefs.overlayMaxDp(this@OverlayService) - 20)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -523,7 +580,7 @@ class OverlayService : Service() {
             })
         })
 
-        fun check(t: String, get: () -> Boolean, set: (Boolean) -> Unit) = CheckBox(this).apply {
+        fun check(t: String, get: () -> Boolean, set: (Boolean) -> Unit) = CheckBox(uiCtx).apply {
             text = t; setTextColor(Color.WHITE); textSize = 13f
             isChecked = get()
             setOnCheckedChangeListener { _, v -> set(v); render() }
@@ -540,7 +597,7 @@ class OverlayService : Service() {
         fun syncBtn() { btnLabel.text = "보스설정 버튼 크기: ${Prefs.buttonScale(this)}%" }
         syncBtn()
         box.addView(btnLabel)
-        box.addView(SeekBar(this).apply {
+        box.addView(SeekBar(uiCtx).apply {
             setMax(200 - 60)
             setProgress(Prefs.buttonScale(this@OverlayService) - 60)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -553,7 +610,7 @@ class OverlayService : Service() {
             })
         })
 
-        val done = Button(this).apply {
+        val done = Button(uiCtx).apply {
             text = "완료 (저장)"; setTextColor(Color.WHITE); isAllCaps = false
             setBackgroundColor(Color.parseColor("#16A085"))
             setOnClickListener { setEditing(false) }
@@ -623,10 +680,16 @@ class OverlayService : Service() {
                         showLoading("캡처 준비 중…")
                         try {
                             CropActivity.pendingBitmap = bmp
-                            startActivity(Intent(this, CropActivity::class.java)
+                            val it = Intent(this, CropActivity::class.java)
                                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
                                 .putExtra(CropActivity.EXTRA_FROM_MEMORY, true)
-                                .putExtra(CropActivity.EXTRA_MODE, Bus.mode.key))
+                                .putExtra(CropActivity.EXTRA_MODE, Bus.mode.key)
+                            // 게임이 다른 화면(뮤뮤 탭)에 있으면 자르기 화면도 그 화면에 연다
+                            val opened = if (shownDisplay > 0) try {
+                                startActivity(it, android.app.ActivityOptions.makeBasic()
+                                    .setLaunchDisplayId(shownDisplay).toBundle()); true
+                            } catch (_: Exception) { false } else false
+                            if (!opened) startActivity(it)
                         } catch (e: Exception) {
                             hideLoading()
                             Bus.log("⚠️ 자르기 화면을 열지 못했습니다: ${e.message}")
@@ -644,7 +707,7 @@ class OverlayService : Service() {
 
     private fun showLoading(text: String) {
         hideLoading()
-        val box = LinearLayout(this).apply {
+        val box = LinearLayout(uiCtx).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
             setPadding(dp(28), dp(22), dp(28), dp(22))
@@ -654,11 +717,11 @@ class OverlayService : Service() {
                 setStroke(dp(1), Color.parseColor("#991ABC9C"))
             }
         }
-        box.addView(android.widget.ProgressBar(this).apply {
+        box.addView(android.widget.ProgressBar(uiCtx).apply {
             isIndeterminate = true
             indeterminateTintList = android.content.res.ColorStateList.valueOf(Color.parseColor("#1ABC9C"))
         }, LinearLayout.LayoutParams(dp(44), dp(44)))
-        box.addView(TextView(this).apply {
+        box.addView(TextView(uiCtx).apply {
             this.text = text
             setTextColor(Color.WHITE); textSize = 16f
             setTypeface(typeface, Typeface.BOLD)
@@ -745,6 +808,7 @@ class OverlayService : Service() {
         main.removeCallbacks(fadeRunnable)
         hideLoading()
         Bus.onCropOpened = null
+        Bus.onGameDisplay = null
         Bus.removeChangeListener(listener)
         hidePanel()
         try { if (strip != null) wm?.removeView(strip) } catch (_: Exception) {}
