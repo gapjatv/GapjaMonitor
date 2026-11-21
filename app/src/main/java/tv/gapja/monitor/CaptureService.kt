@@ -864,7 +864,13 @@ class CaptureService : Service() {
         lobbyNoticeShown = false
 
         val special = BossCatalog.isSpecial(name)
-        val tag = if (special) "침공특수보스" else "${session.mainCount() * 10}라운드"
+        // 침공 히든보스 — 80R 침공특수보스를 일찍 잡고 내 필드로 돌아가면 나온다 (마릿수에 넣지 않음, v2.3)
+        val invHidden = BossCatalog.isInvasionHidden(name, session.mode)
+        val tag = when {
+            special -> "침공특수보스"
+            invHidden -> "침공 히든보스"
+            else -> "${session.mainCount() * 10}라운드"
+        }
         Bus.log("🎯 [$tag] $name 인식 (정확도 ${pct(score)})")
         Bus.onState(session, seq)
         speaker.sayBoss(name)
@@ -895,7 +901,7 @@ class CaptureService : Service() {
         }
 
         // 과거와 같은 순서인지 — 같으면 80R 메인보스를 미리 알려준다
-        if (!special) checkSequenceMatch()
+        if (!special && !invHidden) checkSequenceMatch()
         return true
     }
 

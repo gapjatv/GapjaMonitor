@@ -207,7 +207,7 @@ class AnalysisActivity : AppCompatActivity() {
         }
 
         // ④ 이번 판 현황
-        val cur = Bus.activated.filter { !BossCatalog.isSpecial(it) }
+        val cur = Bus.activated.filter { !BossCatalog.isUncounted(it, Bus.mode) }
         if (cur.isNotEmpty()) {
             sb.append("\n④ 이번 판 현황\n")
             sb.append("   지금까지: ${cur.joinToString(" → ")}\n")

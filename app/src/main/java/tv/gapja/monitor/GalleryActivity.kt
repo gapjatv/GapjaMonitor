@@ -86,8 +86,11 @@ class GalleryActivity : AppCompatActivity() {
         val lobbies = all.filter { f -> PcDefaults.LOBBIES.any { f.name.startsWith(it) } }
         val speeds = all.filter { it.name.contains("배속상태") }
         val extras = all.filter { it !in lobbies && it !in speeds && extraRe.containsMatchIn(it.name) }
+        // 침공에만 나오는 보스(침공특수보스 3종)는 이름에 '침공_' 이 없어도 태초 칸에 넣지 않는다 (v2.3)
         val inv = all.filter {
-            it.name.startsWith(TemplateStore.INVASION_PREFIX) && it !in speeds && it !in extras
+            (it.name.startsWith(TemplateStore.INVASION_PREFIX) ||
+                    BossCatalog.isInvasionOnly(it.name.removeSuffix(".png"))) &&
+                    it !in speeds && it !in extras
         }
         val normal = all.filter { it !in lobbies && it !in speeds && it !in extras && it !in inv }
 
@@ -98,7 +101,7 @@ class GalleryActivity : AppCompatActivity() {
         })
         section(col, "로비 화면 (인식되면 보스 사진 초기화)", lobbies, "아직 없습니다. 자르기 화면에서 '태초로비 · 침공로비 · 공통로비' 를 골라 넣어 주세요.")
         section(col, "인식용 사진 · 태초 보스", normal, null)
-        section(col, "인식용 사진 · 침공 보스 (침공_)", inv, null)
+        section(col, "인식용 사진 · 침공 보스 (침공_) · 침공특수보스 · 침공 히든보스", inv, null)
         section(col, "직접 캡처한 보조 사진 (_2 ~ _4)", extras, "아직 없습니다. 게임 위 [보스설정 → 캡처] 로 추가할 수 있습니다.")
         section(col, "배속 표시 (배속 자동 인식용)", speeds, null)
 

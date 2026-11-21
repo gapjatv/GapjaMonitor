@@ -124,8 +124,8 @@ object Predictor {
      * 일반 침공 보스 마릿수 — 침공특수보스는 세지 않는다.
      * PC판의 `len([b for b in order if b not in INVASION_HIDDEN_BOSSES])` 와 같다.
      */
-    fun mainCount(activated: Collection<String>): Int =
-        activated.count { !BossCatalog.isSpecial(it) }
+    fun mainCount(activated: Collection<String>, mode: GameMode = GameMode.INVASION): Int =
+        activated.count { !BossCatalog.isUncounted(it, mode) }
 }
 
 /** [Predictor.message] 의 condKey 기본값 표식 */

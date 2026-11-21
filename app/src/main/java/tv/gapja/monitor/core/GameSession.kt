@@ -83,10 +83,10 @@ class GameSession(var mode: GameMode = GameMode.INVASION) {
     /** 지금까지 인식된 침공특수보스 (순서 유지) */
     fun seenSpecial(): List<String> = activationOrder.filter { BossCatalog.isSpecial(it) }
 
-    /** 메인보스 순서 (특수보스 제외) — 10R, 20R, … */
-    fun mainOrder(): List<String> = activationOrder.filter { !BossCatalog.isSpecial(it) }
+    /** 메인보스 순서 (특수보스·침공 히든보스 제외) — 10R, 20R, … */
+    fun mainOrder(): List<String> = activationOrder.filter { !BossCatalog.isUncounted(it, mode) }
 
-    /** 일반 침공 보스 마릿수 — 특수보스는 세지 않는다 */
+    /** 일반 침공 보스 마릿수 — 특수보스·침공 히든보스는 세지 않는다 */
     fun mainCount(): Int = mainOrder().size
 
     /**

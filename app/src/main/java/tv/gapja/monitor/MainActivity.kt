@@ -962,7 +962,7 @@ class MainActivity : AppCompatActivity() {
         if (order.isEmpty()) {
             sb.append("아직 인식된 보스가 없습니다")
         } else {
-            val main = order.count { !BossCatalog.isSpecial(it) }
+            val main = order.count { !BossCatalog.isUncounted(it, mode) }
             sb.append("인식 ${order.size}마리 (일반 ${main}마리)\n")
             sb.append(order.joinToString(" → "))
         }

@@ -26,6 +26,15 @@ object BossCatalog {
      */
     val INVASION_SPECIAL: List<String> = listOf("거대 전기로봇", "악마 모노폴리", "쌍둥이 슬라임")
 
+    /**
+     * 히든보스 — 태초에서는 태초 전용 보스(태초 마릿수에 포함, 기존 그대로).
+     *
+     * 침공에서는 80라운드 침공특수보스를 일찍 잡으면 내 필드로 돌아가 잡을 수 있는 '침공 히든보스'.
+     * 침공에서는 침공특수보스처럼 보스 마릿수·순서 기록·80R 예측에 넣지 않는다. (v2.3)
+     * 인식용 사진은 침공 전용 `침공_히든보스.png` 만 쓴다 — 태초 히든보스 사진으로 대신하지 않는다.
+     */
+    const val HIDDEN = "히든보스"
+
     /** 침공 모드에서 80R 메인보스 후보가 되는 보스들 */
     val INVASION_MAIN_POOL: List<String> =
         BOSS_NAMES.filter { it !in NORMAL_ONLY_BOSSES }
@@ -104,6 +113,17 @@ object BossCatalog {
     /** 해당 보스가 침공특수보스인지 */
     fun isSpecial(name: String): Boolean = name in INVASION_SPECIAL
 
+    /** 침공 모드의 히든보스인지 (v2.3) */
+    fun isInvasionHidden(name: String, mode: GameMode): Boolean =
+        mode == GameMode.INVASION && name == HIDDEN
+
+    /** 보스 마릿수·순서 기록에서 빼는 보스인지 — 침공특수보스 + 침공 히든보스 */
+    fun isUncounted(name: String, mode: GameMode): Boolean =
+        isSpecial(name) || isInvasionHidden(name, mode)
+
+    /** 침공에만 나오는 보스인지 — 태초 화면 목록에서는 뺀다 (침공특수보스 3종) */
+    fun isInvasionOnly(name: String): Boolean = isSpecial(name)
+
     /** 보스·모드별 매칭 기준값을 0~1 범위로 돌려준다 */
     fun threshold(name: String, mode: GameMode, overrides: Map<String, Int> = emptyMap()): Double {
         overrides[name]?.let { return it / 100.0 }
@@ -119,7 +139,7 @@ object BossCatalog {
 
     /** 그 모드에서 감시해야 하는 보스 전체 */
     fun watchList(mode: GameMode): List<String> = when (mode) {
-        GameMode.INVASION -> INVASION_MAIN_POOL + INVASION_SPECIAL
+        GameMode.INVASION -> INVASION_MAIN_POOL + INVASION_SPECIAL + HIDDEN
         GameMode.NORMAL -> BOSS_NAMES
     }
 }

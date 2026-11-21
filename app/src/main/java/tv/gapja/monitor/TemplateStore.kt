@@ -99,9 +99,18 @@ class TemplateStore(private val ctx: Context) {
         if (mode == GameMode.INVASION) {
             val inv = userShots("${INVASION_PREFIX}$name")
             if (inv.isNotEmpty()) return inv
+            // 침공 히든보스는 태초 히든보스 사진으로 대신하지 않는다 (v2.3)
+            if (invasionOnlyShots(name, mode)) return emptyList()
         }
         return userShots(name)
     }
+
+    /**
+     * 침공에서 '침공_' 사진만 써야 하는 보스인지 — 침공 히든보스.
+     * 태초 히든보스와 화면이 달라서, 태초 사진으로 찾으면 엉뚱한 곳에 맞을 수 있다.
+     */
+    fun invasionOnlyShots(name: String, mode: GameMode): Boolean =
+        BossCatalog.isInvasionHidden(name, mode)
 
     /** 앱 기본 사진인데 같은 보스(로비)에 내 사진이 있어서 인식에서 빠진 사진인지 — 사진 보기 화면 표시용 */
     fun shadowedByUser(fileName: String): Boolean {
@@ -122,8 +131,11 @@ class TemplateStore(private val ctx: Context) {
 
     /** 그 보스(또는 로비)에 내가 등록한 사진이 하나라도 있는지 — 등록 도우미용 */
     fun hasUserShot(name: String, mode: GameMode): Boolean {
-        val bases = if (mode == GameMode.INVASION && !PcDefaults.isLobby(name))
-            listOf("${INVASION_PREFIX}$name", name) else listOf(name)
+        val bases = when {
+            invasionOnlyShots(name, mode) -> listOf("${INVASION_PREFIX}$name")
+            mode == GameMode.INVASION && !PcDefaults.isLobby(name) -> listOf("${INVASION_PREFIX}$name", name)
+            else -> listOf(name)
+        }
         return bases.any { b ->
             (listOf("$b.png") + BossCatalog.EXTRA_SHOT_SUFFIXES.map { "$b$it.png" })
                 .any { isUser(it) && File(dir, it).exists() }
@@ -188,6 +200,7 @@ class TemplateStore(private val ctx: Context) {
         userShotsFor(name, mode).firstOrNull { get(it) != null }?.let { return it }
         val inv = "${INVASION_PREFIX}$name.png"
         if (mode == GameMode.INVASION && usable(inv) && get(inv) != null) return inv
+        if (invasionOnlyShots(name, mode)) return null
         val base = "$name.png"
         return if (usable(base) && get(base) != null) base else null
     }
@@ -207,6 +220,7 @@ class TemplateStore(private val ctx: Context) {
             return mine.filter { it != primary }
         }
         val inv = if (mode == GameMode.INVASION) extraShots("${INVASION_PREFIX}$name") else emptyList()
+        if (invasionOnlyShots(name, mode)) return inv.filter { usable(it) }
         return (inv + extraShots(name)).filter { usable(it) }
     }
 
@@ -217,6 +231,9 @@ class TemplateStore(private val ctx: Context) {
     /** 그 모드에서 인식할 수 있는 보스 */
     fun availableBosses(all: List<String>, mode: GameMode): List<String> =
         all.filter {
+            if (invasionOnlyShots(it, mode))
+                return@filter userShotsFor(it, mode).isNotEmpty() ||
+                        usable("${INVASION_PREFIX}$it.png") || extraShots(it, mode).isNotEmpty()
             userShotsFor(it, mode).isNotEmpty() ||
             usable("$it.png") || extraShots(it, mode).isNotEmpty() ||
                     (mode == GameMode.INVASION && usable("${INVASION_PREFIX}$it.png"))
