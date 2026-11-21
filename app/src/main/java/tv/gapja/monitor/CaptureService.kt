@@ -597,6 +597,9 @@ class CaptureService : Service() {
     /** 마지막 로비 판정 로그 시각 (같은 내용이 계속 쌓이지 않게) */
     private var lastLobbyAmbigLog = 0L
 
+    /** 로비 글자를 이미 한 번 띄웠는지 — 다음 보스가 인식되면 다시 false (v2.2) */
+    private var lobbyNoticeShown = false
+
     private fun checkLobby(scr: Mat, now: Long): Boolean {
         // ── v2.0: 로비 3종을 모두 재고, 가장 높은 것을 고른다 ──
         // 예전에는 태초로비 → 침공로비 순서로 '먼저 기준을 넘은 것' 을 골랐다.
@@ -665,7 +668,13 @@ class CaptureService : Service() {
                     else -> "🏠 $label 인식"
                 }
                 // 로비·모드 전환 글자는 메인 화면 스위치로 켜고 끈다 (기본 끄기, v2.0)
-                if (Prefs.lobbyNotice(this)) Bus.notice(if (willReset) "$head\n보스 사진 초기화" else head)
+                // v2.2: 로비 글자는 처음 한 번만 — 다음 보스가 인식될 때까지는
+                //       로비가 다시 보이거나 태초 ⇄ 침공 로비로 넘어가도 글자를 또 띄우지 않는다
+                //       (모드 전환·보스 초기화는 그대로 한다)
+                if (Prefs.lobbyNotice(this) && !lobbyNoticeShown) {
+                    lobbyNoticeShown = true
+                    Bus.notice(if (willReset) "$head\n보스 사진 초기화" else head)
+                }
             }
             // 자르기 화면에서 막 돌아온 직후(15초)에는 로비가 잠깐 보여도 보스를 지우지 않는다
             // (게임이 다시 접속하면서 로비를 잠깐 보여 주는 경우가 있어서)
@@ -851,6 +860,8 @@ class CaptureService : Service() {
 
     fun activate(name: String, score: Double, auto: Boolean): Boolean {
         if (!session.activate(name, auto)) return false
+        // 새 판에서 보스가 나왔으니, 다음에 로비로 돌아가면 로비 글자를 다시 한 번 띄운다
+        lobbyNoticeShown = false
 
         val special = BossCatalog.isSpecial(name)
         val tag = if (special) "침공특수보스" else "${session.mainCount() * 10}라운드"
