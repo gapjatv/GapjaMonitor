@@ -121,6 +121,33 @@ object Predictor {
         BossCatalog.INVASION_MAIN_POOL.filter { it !in activated }
 
     /**
+     * 남은 침공 메인보스 후보가 이 마릿수가 되면(= 70R 보스가 나온 직후) 80R 예상 보스를 알려준다.
+     * PC판 미출현 팝업 기준과 같다. (후보 11종 − 이미 나온 7종 = 4종)
+     */
+    const val REMAIN_ANNOUNCE_COUNT = 4
+
+    /**
+     * 남은 후보를 알려야 하는 순간이면 그 후보들을, 아니면 null.
+     * 침공에서만 알려 준다 (태초는 후보 구조가 달라서 PC판도 자동 안내를 하지 않는다).
+     */
+    fun remainingToAnnounce(activated: Collection<String>, mode: GameMode): List<String>? {
+        if (mode != GameMode.INVASION) return null
+        val rem = remainingMainCandidates(activated)
+        return if (rem.size == REMAIN_ANNOUNCE_COUNT) rem else null
+    }
+
+    /** 이름 끝 글자에 받침이 있으면 "이", 없으면 "가" (한글이 아니면 "이") */
+    fun iga(name: String): String {
+        val c = name.trim().lastOrNull() ?: return "이"
+        if (c !in '\uAC00'..'\uD7A3') return "이"
+        return if ((c - '\uAC00') % 28 != 0) "이" else "가"
+    }
+
+    /** 예) "80라운드 예상보스는 그런트, 샤먼, 매지션, 사신이 남아 있습니다" */
+    fun remainingSpeech(names: List<String>): String =
+        "80라운드 예상보스는 ${names.joinToString(", ")}${iga(names.lastOrNull() ?: "")} 남아 있습니다"
+
+    /**
      * 일반 침공 보스 마릿수 — 침공특수보스는 세지 않는다.
      * PC판의 `len([b for b in order if b not in INVASION_HIDDEN_BOSSES])` 와 같다.
      */

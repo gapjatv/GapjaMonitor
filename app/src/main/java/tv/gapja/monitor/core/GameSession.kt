@@ -29,6 +29,9 @@ class GameSession(var mode: GameMode = GameMode.INVASION) {
     /** 과거와 같은 순서라고 이미 알렸는지 (판당 1회) */
     var seqMatchAnnounced: Boolean = false
 
+    /** 남은 보스 4마리(80R 예상) 안내를 이미 했는지 (판당 1회) */
+    var remainAnnounced: Boolean = false
+
     /** 보스별 '되돌리기 쿨다운' 만료 시각(ms) — 방금 되돌린 보스를 다시 잡지 않게 */
     private val undoCooldown = HashMap<String, Long>()
 
@@ -71,6 +74,8 @@ class GameSession(var mode: GameMode = GameMode.INVASION) {
         val name = activationOrder.removeAt(activationOrder.size - 1)
         autoRecognized.remove(name)
         undoCooldown[name] = nowMs + (cooldownSec * 1000).toLong()
+        // 되돌리면 남은 후보 수가 달라지므로, 다시 4마리가 되면 새로 알려 준다
+        remainAnnounced = false
         // 특수보스를 되돌렸으면 80R 확정도 함께 취소한다
         if (BossCatalog.isSpecial(name)) {
             deduced80R = false
@@ -128,5 +133,6 @@ class GameSession(var mode: GameMode = GameMode.INVASION) {
         boss80R = null
         cond80R = null
         seqMatchAnnounced = false
+        remainAnnounced = false
     }
 }

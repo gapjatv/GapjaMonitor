@@ -28,6 +28,7 @@ import android.view.WindowManager
 import android.widget.Button
 import android.widget.CheckBox
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
@@ -35,6 +36,7 @@ import tv.gapja.monitor.core.BossCatalog
 import tv.gapja.monitor.core.GameMode
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.roundToInt
 
 /**
  * 게임 화면 위에 보스 사진을 띄운다. (PC판 OBS 크로마키 창을 대신한다)
@@ -43,15 +45,19 @@ import kotlin.math.min
  *   • 가로 / 세로 배치를 고를 수 있다
  *   • 보스가 늘어나면 사진을 자동으로 줄여서 정해 둔 길이 안에 전부 보이게 한다
  *   • 침공 특수보스 사진만 숨기거나, 보스 사진 전체를 숨길 수 있다 (음성은 그대로)
- *   • [조절] 을 누르면 사진 줄을 끌어서 옮기고, 끝의 점을 끌어서 길이를 바꾼다
- *   • [캡처] 를 누르면 지금 게임 화면을 찍어서 보스 사진을 잘라 등록할 수 있다
+ *   • [보스조절] 을 누르면 사진 줄을 끌어서 옮기고, 테두리의 점 8개를 끌어서 크기를 바꾼다
+ *     (줄바꿈 없이 전체 크기만 부드럽게 바뀐다 · 모서리 점은 비율을 지키며 키운다)
+ *   • [보스캡처] 를 누르면 지금 게임 화면을 찍어서 보스 사진을 잘라 등록할 수 있다
+ *   • 침공에서 70R 보스가 나와 남은 후보가 4마리가 되면 그 4마리를 사진으로 잠깐 보여 준다
+ *     (크기·위치는 [보스조절] 에서 자유롭게 · 가로/세로/2×2 배치가 부드럽게 바뀐다)
+ *   • [홈앱이동] 은 메인 화면(앱)으로 돌아간다
  *
  * ⚠️ 사진 줄 터치 — 두 가지 중 고를 수 있다 (조절 메뉴 · 메인 화면)
  *    • 기본: 언제든 사진 줄을 손가락으로 끌어서 옮길 수 있다.
  *      대신 사진이 놓인 자리는 게임 터치가 막힌다. (사진 사이 빈칸 포함, 줄 크기만큼)
  *    • 터치 통과: 사진 줄이 터치를 받지 않아(FLAG_NOT_TOUCHABLE) 사진 위를 눌러도 게임이 눌린다.
  *      Android 12부터는 덮인 창의 불투명도가 0.8 이하여야 터치가 아래로 전달되므로
- *      이때는 창 투명도를 0.8 로 둔다. 위치는 [조절] 에서 옮긴다.
+ *      이때는 창 투명도를 0.8 로 둔다. 위치는 [보스조절] 에서 옮긴다.
  *
  * ⚠️ '다른 앱 위에 표시' 권한이 필요하다. 없으면 조용히 아무것도 하지 않는다.
  */
@@ -66,8 +72,12 @@ class OverlayService : Service() {
     private var chip: LinearLayout? = null
     private var chipLp: WindowManager.LayoutParams? = null
 
-    private var panel: LinearLayout? = null
+    private var panel: View? = null
     private var panelLp: WindowManager.LayoutParams? = null
+
+    /** 남은 보스(80R 예상) 사진 창 */
+    private var remain: RemainView? = null
+    private var remainLp: WindowManager.LayoutParams? = null
 
     private var editing = false
 
@@ -184,6 +194,9 @@ class OverlayService : Service() {
         if (editing) { editing = false; hidePanel() }
         hideLoading()
         hideNotice()
+        removeRemain()
+        main.removeCallbacks(resizeTick); rsActive = false; rsTickPosted = false
+        liveD = -1; liveLen = -1
         try { strip?.let { wm?.removeView(it) } } catch (_: Exception) {}
         try { chip?.let { wm?.removeView(it) } } catch (_: Exception) {}
         strip = null; chip = null
@@ -240,41 +253,31 @@ class OverlayService : Service() {
             alpha = stripAlpha()
         }
 
-        // 끌어서 이동 (언제든) / 조절 모드에서는 테두리의 주황 점 8개로 길이·크기 조절
+        // 끌어서 이동 (언제든) / 조절 모드에서는 테두리의 주황 점 8개로 크기 조절
         var handle = 0                     // 0 이면 이동
         var sx = 0f; var sy = 0f
         var ox = 0; var oy = 0
-        var startLen = 0
-        var startD = 0
-        var lastAt = 0L
         v.setOnTouchListener { _, ev ->
             val lp = stripLp ?: return@setOnTouchListener false
             when (ev.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     sx = ev.rawX; sy = ev.rawY; ox = lp.x; oy = lp.y
-                    startLen = v.currentLengthPx()
-                    startD = v.d
                     handle = v.hitHandle(ev.x, ev.y)
+                    if (handle != 0) beginResize(v, lp, handle)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (ev.rawX - sx).toInt(); val dy = (ev.rawY - sy).toInt()
+                    val dx = ev.rawX - sx; val dy = ev.rawY - sy
                     if (handle == 0) {
-                        lp.x = ox + dx; lp.y = oy + dy
+                        lp.x = ox + dx.toInt(); lp.y = oy + dy.toInt()
                         try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
                     } else {
-                        // 너무 자주 다시 그리지 않게 (마우스로 끌 때 버벅임 방지)
-                        val now = android.os.SystemClock.uptimeMillis()
-                        if (now - lastAt < 16) return@setOnTouchListener true
-                        lastAt = now
-                        resizeStrip(v, lp, handle, dx, dy, ox, oy, startLen, startD)
+                        dragResize(dx, dy)
                     }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    // 줄바꿈 때문에 옮겨 둔 만큼을 빼고, '첫 줄' 자리를 저장한다
-                    if (Prefs.overlayVertical(this)) Prefs.setOverlayPos(this, lp.x + wrapShift, lp.y)
-                    else Prefs.setOverlayPos(this, lp.x, lp.y + wrapShift)
+                    if (handle != 0) endResize() else saveStripPos(lp)
                     handle = 0
                     true
                 }
@@ -291,49 +294,140 @@ class OverlayService : Service() {
         }
     }
 
-    /**
-     * 조절 점을 끌 때 — 줄 방향 끝은 길이, 직각 방향 옆은 사진 크기를 바꾼다.
-     * 왼쪽·위쪽 점을 끌면 반대편이 제자리에 있도록 창 위치도 같이 옮긴다.
-     */
-    private fun resizeStrip(v: BossStripView, lp: WindowManager.LayoutParams, h: Int,
-                            dx: Int, dy: Int, ox: Int, oy: Int, startLen: Int, startD: Int) {
-        val vertical = Prefs.overlayVertical(this)
-        val dens = resources.displayMetrics.density
-        // 줄 방향(길이)과 직각 방향(크기)으로 나눈다
-        val lenEnd = if (vertical) BossStripView.H_BOTTOM else BossStripView.H_RIGHT
-        val lenStart = if (vertical) BossStripView.H_TOP else BossStripView.H_LEFT
-        val sizeEnd = if (vertical) BossStripView.H_RIGHT else BossStripView.H_BOTTOM
-        val sizeStart = if (vertical) BossStripView.H_LEFT else BossStripView.H_TOP
-        val along = if (vertical) dy else dx
-        val across = if (vertical) dx else dy
+    /** 줄바꿈 때문에 옮겨 둔 만큼을 빼고, '첫 줄' 자리를 저장한다 */
+    private fun saveStripPos(lp: WindowManager.LayoutParams) {
+        if (Prefs.overlayVertical(this)) Prefs.setOverlayPos(this, lp.x + wrapShift, lp.y)
+        else Prefs.setOverlayPos(this, lp.x, lp.y + wrapShift)
+    }
 
-        var newX = ox; var newY = oy
-        var len = startLen
-        if ((h and lenEnd) != 0) len = startLen + along
-        if ((h and lenStart) != 0) {
-            len = startLen - along
-            if (vertical) newY = oy + along else newX = ox + along
+    // ── 사진 줄 크기 조절 (점 8개) ─────────────────────────────────
+    //
+    // 어느 점을 끌든 '줄바꿈 없이' 전체 크기만 바뀐다. (한 줄에 놓인 사진 수는 그대로)
+    //   • 변 가운데 점  → 그 변이 손가락을 따라가도록 크기 변경
+    //   • 모서리 점     → 가로·세로 비율을 지키며 대각선 방향으로 키우고 줄임
+    // 반대편 모서리는 제자리에 고정된다. 손가락보다 살짝 느리게(RESIZE_DAMPING) 따라가고,
+    // 화면에는 매 프레임 조금씩 다가가며(RESIZE_EASE) 그려서 뚝뚝 끊기지 않게 한다.
+
+    private var rsActive = false          // 조절 중이거나, 손을 뗀 뒤 목표 크기까지 따라가는 중
+    private var rsDragging = false        // 손가락이 닿아 있는 중
+    private var rsTickPosted = false
+    private var rsHandle = 0
+    private var rsOx = 0; private var rsOy = 0
+    private var rsW0 = 0; private var rsH0 = 0
+    private var rsD0 = 0
+    private var rsPer = 1
+    private var rsCur = 0f                // 지금 그리는 사진 지름(px)
+    private var rsTgt = 0f                // 목표 지름(px)
+
+    /** 조절 중 화면에 그리는 사진 지름·줄 길이(px). -1 이면 저장된 설정값을 쓴다 */
+    private var liveD = -1
+    private var liveLen = -1
+
+    /** 렌더링 때 '줄바꿈으로 옮긴 만큼'을 창 위치에 다시 반영하지 않는다 (조절 중에는 위치를 직접 계산) */
+    private var skipShiftAdjust = false
+
+    private fun beginResize(v: BossStripView, lp: WindowManager.LayoutParams, h: Int) {
+        if (rsActive) commitResize()      // 아직 따라가는 중이었으면 먼저 확정한다
+        rsActive = true; rsDragging = true; rsHandle = h
+        rsOx = lp.x; rsOy = lp.y
+        rsW0 = v.width; rsH0 = v.height
+        rsD0 = v.d
+        rsPer = v.linesPerRow()
+        rsCur = v.d.toFloat(); rsTgt = rsCur
+    }
+
+    private fun dragResize(dx: Float, dy: Float) {
+        val v = strip ?: return
+        val k = RESIZE_DAMPING
+        val hd = rsHandle
+        val pad2 = v.padPx() * 2
+        val iw = max(1, rsW0 - pad2).toFloat()
+        val ih = max(1, rsH0 - pad2).toFloat()
+        var num = 0f; var den = 0f
+        if ((hd and BossStripView.H_RIGHT) != 0 || (hd and BossStripView.H_LEFT) != 0) {
+            val dW = (if ((hd and BossStripView.H_RIGHT) != 0) dx else -dx) * k
+            num += dW * iw; den += iw * iw
         }
-        var dd = startD
-        if ((h and sizeEnd) != 0) dd = startD + across
-        if ((h and sizeStart) != 0) {
-            dd = startD - across
-            if (vertical) newX = ox + across else newY = oy + across
+        if ((hd and BossStripView.H_BOTTOM) != 0 || (hd and BossStripView.H_TOP) != 0) {
+            val dH = (if ((hd and BossStripView.H_BOTTOM) != 0) dy else -dy) * k
+            num += dH * ih; den += ih * ih
         }
-        dd = dd.coerceIn(dp(20), dp(160))
-        len = max(dp(60), len)
-        if ((h and (sizeEnd or sizeStart)) != 0) {
-            Prefs.setOverlayMaxDp(this, (dd / dens).toInt())
-            // 자동 축소를 켠 경우에만: 사진을 키웠는데 줄 길이 때문에 축소되면 안 커지므로 길이도 같이 늘린다
-            // (자동 축소가 꺼져 있으면 크기는 그대로 두고 넘치는 사진은 다음 줄로 간다)
-            if (Prefs.autoShrink(this) && (h and (lenEnd or lenStart)) == 0) len = max(len, v.lengthFor(dd))
+        // 한 변이면 그 변의 늘어난 비율, 모서리면 대각선 방향으로 사영한 비율
+        val scale = if (den > 0f) 1f + num / den else 1f
+        rsTgt = (rsD0 * scale).coerceIn(dp(20).toFloat(), max(dp(20), maxStripD(v)).toFloat())
+        ensureResizeTick()
+    }
+
+    /** 화면 안에 다 들어가는 가장 큰 사진 지름(px) — 줄이 화면 밖으로 나가지 않게 */
+    private fun maxStripD(v: BossStripView): Int {
+        val (sw, sh) = screenSize()
+        val vertical = Prefs.overlayVertical(this)
+        val pad2 = v.padPx() * 2; val gap = v.gapPx()
+        val per = rsPer
+        val lines = (max(1, v.itemCount()) + per - 1) / per
+        val along = (if (vertical) sh else sw) - pad2 - (per - 1) * gap
+        val across = (if (vertical) sw else sh) - pad2 - (lines - 1) * gap
+        return min(dp(160), min(along / per, across / lines))
+    }
+
+    private fun endResize() {
+        rsDragging = false
+        val dens = resources.displayMetrics.density
+        // 설정에는 dp 정수로 저장되므로, 손을 떼면 가장 가까운 dp 로 맞춰서 끝낸다
+        rsTgt = dp(Math.round(rsTgt / dens)).toFloat().coerceIn(dp(20).toFloat(), dp(160).toFloat())
+        ensureResizeTick()
+    }
+
+    private fun ensureResizeTick() {
+        if (rsTickPosted) return
+        rsTickPosted = true
+        main.post(resizeTick)
+    }
+
+    private val resizeTick = object : Runnable {
+        override fun run() {
+            rsTickPosted = false
+            if (!rsActive) return
+            var cur = rsCur + (rsTgt - rsCur) * RESIZE_EASE
+            if (kotlin.math.abs(rsTgt - cur) < 0.6f) cur = rsTgt
+            rsCur = cur
+            applyStripSize(cur.roundToInt())
+            if (cur != rsTgt) { rsTickPosted = true; main.postDelayed(this, 16) }
+            else if (!rsDragging) commitResize()
         }
-        Prefs.setOverlayLengthDp(this, (len / dens).toInt())
-        lp.x = newX; lp.y = newY
+    }
+
+    /** 사진 지름을 dd(px) 로 맞추고, 반대편 모서리가 제자리에 있도록 창 위치를 옮긴다 */
+    private fun applyStripSize(dd: Int) {
+        val v = strip ?: return
+        val lp = stripLp ?: return
+        val per = rsPer
+        liveD = dd
+        liveLen = per * dd + (per - 1) * v.gapPx()
+        val (w, h) = v.sizeFor(dd, per)
+        lp.x = if ((rsHandle and BossStripView.H_LEFT) != 0) rsOx + (rsW0 - w) else rsOx
+        lp.y = if ((rsHandle and BossStripView.H_TOP) != 0) rsOy + (rsH0 - h) else rsOy
+        skipShiftAdjust = true
+        try { render() } finally { skipShiftAdjust = false }
+    }
+
+    /** 조절이 끝나면 크기·길이·위치를 저장한다 */
+    private fun commitResize() {
+        main.removeCallbacks(resizeTick); rsTickPosted = false
+        val dens = resources.displayMetrics.density
+        val dd = liveD; val len = liveLen
+        rsActive = false; rsDragging = false
+        if (dd > 0) {
+            Prefs.setOverlayMaxDp(this, Math.round(dd / dens))
+            // 길이는 올림 + 1dp 여유 — 반올림 오차로 한 장이 다음 줄로 밀려나지 않게
+            Prefs.setOverlayLengthDp(this, kotlin.math.ceil(len / dens).toInt() + 1)
+        }
+        liveD = -1; liveLen = -1
+        stripLp?.let { saveStripPos(it) }
         render()
     }
 
-    // ── [보스설정] 버튼 (누르면 캡처 · 조절 · 리셋 · 끄기) ─────────────
+    // ── [보스설정] 버튼 (누르면 보스캡처 · 보스조절 · 리셋 · 홈앱이동 · 종료) ─────────────
 
     private var chipMain: TextView? = null
     private var chipMenu: LinearLayout? = null
@@ -392,14 +486,15 @@ class OverlayService : Service() {
         }
         val startBtn = menuBtn("시작", "#E616A085") { startFromOverlay() }
         val pauseBtn = menuBtn("일시정지", "#E67F8C8D") { togglePause() }
-        val capBtn = menuBtn("캡처", "#E62980B9") { takeSnapshot() }
+        val capBtn = menuBtn("보스캡처", "#E62980B9") { takeSnapshot() }
         val resetBtn = menuBtn("리셋", "#E6D35400") { resetBosses() }
         menuStart = startBtn; menuPause = pauseBtn; menuCapture = capBtn; menuReset = resetBtn
         val items = listOf(
             startBtn, pauseBtn, capBtn,
-            menuBtn("조절", "#E616A085") { setEditing(!editing) },
+            menuBtn("보스조절", "#E616A085") { setEditing(!editing) },
             resetBtn,
-            menuBtn("끄기", "#E6C0392B") { exitApp() }
+            menuBtn("홈앱이동", "#E68E44AD") { openHome() },
+            menuBtn("종료", "#E6C0392B") { exitApp() }
         )
         chipMenuBtns.clear()
         for (b in items) {
@@ -473,8 +568,8 @@ class OverlayService : Service() {
 
     /**
      * 감시 상태에 맞게 메뉴를 바꾼다.
-     *   감시 중  → 일시정지(재개) · 캡처 · 조절 · 리셋 · 끄기
-     *   멈춤     → 시작 · 조절 · 끄기
+     *   감시 중  → 일시정지(재개) · 보스캡처 · 보스조절 · 리셋 · 홈앱이동 · 종료
+     *   멈춤     → 시작 · 보스조절 · 홈앱이동 · 종료
      */
     private fun refreshMenu() {
         val run = Bus.running
@@ -516,7 +611,7 @@ class OverlayService : Service() {
         Toast.makeText(this, if (pausing) "인식을 잠시 멈췄습니다" else "인식을 다시 시작합니다", Toast.LENGTH_SHORT).show()
     }
 
-    /** 버튼 크기를 설정값에 맞춘다 (보스설정 → 조절 → 버튼 크기) */
+    /** 버튼 크기를 설정값에 맞춘다 (보스설정 → 보스조절 → 버튼 크기) */
     private fun applyChipScale() {
         val pct = Prefs.buttonScale(this)
         if (pct == chipScaleApplied) return
@@ -542,7 +637,27 @@ class OverlayService : Service() {
         Toast.makeText(this, "보스 사진을 초기화했습니다", Toast.LENGTH_SHORT).show()
     }
 
-    /** [끄기] 감시와 게임 위 표시를 멈추고 앱을 닫는다 */
+    /**
+     * [홈앱이동] 메인 화면(앱)으로 간다. 감시·게임 위 표시는 그대로 계속된다.
+     * 게임이 다른 화면(뮤뮤 탭)에 있으면 메인 화면도 그 화면에 연다 (자르기 화면과 같은 방식).
+     */
+    private fun openHome() {
+        if (editing) setEditing(false)
+        try {
+            val it = Intent(this, MainActivity::class.java)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+            val opened = if (shownDisplay > 0) try {
+                startActivity(it, android.app.ActivityOptions.makeBasic()
+                    .setLaunchDisplayId(shownDisplay).toBundle()); true
+            } catch (_: Exception) { false } else false
+            if (!opened) startActivity(it)
+        } catch (e: Exception) {
+            Bus.log("⚠️ 메인 화면을 열지 못했습니다: ${e.message}")
+            Toast.makeText(this, "메인 화면을 열지 못했습니다", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /** [종료] 감시와 게임 위 표시를 멈추고 앱을 닫는다 */
     private fun exitApp() {
         if (editing) setEditing(false)
         Toast.makeText(this, "운빨보스알림을 종료합니다", Toast.LENGTH_SHORT).show()
@@ -584,19 +699,27 @@ class OverlayService : Service() {
         val box = LinearLayout(uiCtx).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        // 화면이 작으면 위아래로 밀어서 볼 수 있게 (칸이 많아져도 '완료' 버튼이 화면 밖으로 나가지 않는다)
+        val scroll = ScrollView(uiCtx).apply {
+            isVerticalScrollBarEnabled = false
             background = GradientDrawable().apply {
                 cornerRadius = dp(16).toFloat()
                 setColor(Color.parseColor("#F0101A24"))
                 setStroke(dp(1), Color.parseColor("#661ABC9C"))
             }
+            addView(box)
         }
         fun label(t: String) = TextView(uiCtx).apply {
             text = t; setTextColor(Color.WHITE); textSize = 13f
             setTypeface(typeface, Typeface.BOLD)
         }
         box.addView(TextView(uiCtx).apply {
-            text = "사진 줄을 끌면 이동 · 테두리 주황 점(상하좌우·모서리)을 끌면 길이·크기 조절"
+            text = "🟠 보스 사진 줄: 끌면 이동 · 주황 점 8개를 끌면 크기 조절\n" +
+                   "   (모서리 점은 비율을 지키며 키우고 줄여요 · 줄바꿈 없이 크기만 바뀝니다)\n" +
+                   "🔵 남은 보스 4마리 창: 끌면 이동 · 파란 점 8개를 끌면 가로·세로를 자유롭게"
             setTextColor(Color.parseColor("#F39C12")); textSize = 12f
+            setLineSpacing(dp(2).toFloat(), 1f)
         })
 
         // 배치
@@ -620,7 +743,7 @@ class OverlayService : Service() {
         syncLayoutBtns()
         box.addView(row)
 
-        // 최대 크기
+        // 최대 크기 — 점으로 조절할 때와 똑같이, 줄바꿈 없이 크기만 바꾼다
         val sizeLabel = label("")
         fun syncSize() { sizeLabel.text = "사진 최대 크기: ${Prefs.overlayMaxDp(this)}dp" }
         syncSize()
@@ -631,6 +754,14 @@ class OverlayService : Service() {
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
                     if (!u) return
+                    val dd = dp(p + 20)
+                    // 한 줄에 놓인 사진 수가 그대로이도록 줄 길이도 같이 맞춘다 (둘째 줄로 밀리지 않게)
+                    strip?.let { sv ->
+                        val per = sv.linesPerRow()
+                        val len = per * dd + (per - 1) * sv.gapPx()
+                        Prefs.setOverlayLengthDp(this@OverlayService,
+                            kotlin.math.ceil(len / resources.displayMetrics.density).toInt() + 1)
+                    }
                     Prefs.setOverlayMaxDp(this@OverlayService, p + 20); syncSize(); render()
                 }
                 override fun onStartTrackingTouch(s: SeekBar?) {}
@@ -648,6 +779,9 @@ class OverlayService : Service() {
         box.addView(check("자동 축소 (보스가 늘면 줄여서 다 보이게)", { Prefs.autoShrink(this) }) { Prefs.setAutoShrink(this, it) })
         box.addView(check("사진 터치 통과 (사진 위도 게임이 눌림 · 대신 이동은 여기서만)", { Prefs.stripPassThrough(this) }) {
             Prefs.setStripPassThrough(this, it)
+        })
+        box.addView(check("남은 보스 4마리 예측 (70R 보스 후 화면·음성)", { Prefs.remainEnabled(this) }) {
+            Prefs.setRemainEnabled(this, it)
         })
 
         // [보스설정] 버튼 크기
@@ -675,7 +809,7 @@ class OverlayService : Service() {
         }
         box.addView(done, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)).also { it.topMargin = dp(6) })
 
-        val (sw, _) = screenSize()
+        val (sw, sh) = screenSize()
         panelLp = WindowManager.LayoutParams(
             min(sw - dp(24), dp(360)),
             WindowManager.LayoutParams.WRAP_CONTENT,
@@ -684,25 +818,30 @@ class OverlayService : Service() {
             PixelFormat.TRANSLUCENT
         ).apply {
             // 보스 사진 줄이 화면 아래쪽에 있으면 설정 창은 위에, 위쪽에 있으면 아래에 띄운다
-            val (_, sh) = screenSize()
             val stripMid = (stripLp?.y ?: 0) + (strip?.height ?: 0) / 2
             gravity = (if (stripMid > sh / 2) Gravity.TOP else Gravity.BOTTOM) or Gravity.CENTER_HORIZONTAL
             y = dp(24)
         }
-        panel = box
-        try { wm?.addView(box, panelLp) } catch (_: Exception) { panel = null }
-        bringStripToFront()
+        panel = scroll
+        try { wm?.addView(scroll, panelLp) } catch (_: Exception) { panel = null }
+        restack()
     }
 
     /**
-     * 사진 줄을 설정 창보다 위로 올린다.
-     * 오버레이 창은 나중에 붙인 것이 위에 그려지므로, 사진 줄을 떼었다가 다시 붙인다.
+     * 창을 쌓는 순서를 바로잡는다 (아래부터: 남은 보스 창 → 설정 창 → 사진 줄 → 버튼).
+     * 오버레이 창은 나중에 붙인 것이 위에 그려지므로, 떼었다가 순서대로 다시 붙인다.
+     * 사진 줄·버튼이 설정 창에 가려지면 끌 수 없어서 항상 맨 위에 둔다.
      */
-    private fun bringStripToFront() {
-        val v = strip ?: return
-        val lp = stripLp ?: return
-        try { wm?.removeView(v); wm?.addView(v, lp) } catch (_: Exception) {}
-        chip?.let { c -> chipLp?.let { clp -> try { wm?.removeView(c); wm?.addView(c, clp) } catch (_: Exception) {} } }
+    private fun restack() {
+        val w = wm ?: return
+        fun again(v: View?, lp: WindowManager.LayoutParams?) {
+            if (v == null || lp == null) return
+            try { w.removeView(v); w.addView(v, lp) } catch (_: Exception) {}
+        }
+        again(remain, remainLp)
+        again(panel, panelLp)
+        again(strip, stripLp)
+        again(chip, chipLp)
     }
 
     private fun hidePanel() {
@@ -879,6 +1018,7 @@ class OverlayService : Service() {
         applyChipScale()
         applyStripTouchMode()
         refreshMenu()
+        syncRemain()
         val v = strip ?: return
         val lp = stripLp ?: return
         val showAll = Prefs.overlayShowAll(this)
@@ -897,11 +1037,12 @@ class OverlayService : Service() {
         val vertical = Prefs.overlayVertical(this)
         val (sw, sh) = screenSize()
         val lenDp = Prefs.overlayLengthDp(this)
-        val avail = if (lenDp > 0) dp(lenDp) else {
+        // 크기를 조절하는 동안(liveD/liveLen)에는 저장값 대신 지금 그리는 값을 쓴다
+        val avail = if (liveLen > 0) liveLen else if (lenDp > 0) dp(lenDp) else {
             if (vertical) sh - max(0, lp.y) - dp(24) else sw - max(0, lp.x) - dp(8)
         }
         // 첫 줄의 자리(줄바꿈으로 옮기기 전) 가 화면 오른쪽(아래쪽) 절반에 있으면 줄을 안쪽(왼쪽·위쪽)으로 늘린다
-        val maxD = dp(Prefs.overlayMaxDp(this))
+        val maxD = if (liveD > 0) liveD else dp(Prefs.overlayMaxDp(this))
         val anchor = if (vertical) lp.x + wrapShift else lp.y + wrapShift
         val reverse = if (vertical) anchor + maxD / 2 > sw / 2 else anchor + maxD / 2 > sh / 2
         v.update(
@@ -916,11 +1057,182 @@ class OverlayService : Service() {
         )
         val newShift = if (reverse) v.extraAcross() else 0
         if (newShift != wrapShift) {
-            if (vertical) lp.x += wrapShift - newShift else lp.y += wrapShift - newShift
+            if (!skipShiftAdjust) {
+                if (vertical) lp.x += wrapShift - newShift else lp.y += wrapShift - newShift
+            }
             wrapShift = newShift
         }
         v.visibility = if (items.isEmpty() && !editing) View.GONE else View.VISIBLE
         try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
+    }
+
+    // ── 남은 보스 4마리 (80R 예상) 창 ───────────────────────────────
+    //
+    // 침공에서 70R 보스가 나와 남은 후보가 4마리가 되면 CaptureService 가 Bus.remaining 에 담는다.
+    // 평소에는 터치를 통과시키고(게임을 가리지 않음), [보스조절] 중에는 예시 4마리를 보여 주며
+    // 끌어서 옮기고 파란 점 8개로 가로·세로 크기를 자유롭게 바꿀 수 있다.
+    // 크기에 따라 사진이 가로 한 줄 → 2×2 → 세로 한 줄로 부드럽게 다시 배치된다.
+
+    private var remainShownItems: List<String> = emptyList()
+    private var remainShownEditing = false
+
+    /** 조절 화면에서 보여 줄 예시 (실제 후보가 없을 때) */
+    private fun remainSample(): List<String> = listOf("그런트", "샤먼", "매지션", "사신")
+
+    private fun syncRemain() {
+        val real = Bus.remaining
+        val want = Prefs.remainEnabled(this) && (real.isNotEmpty() || editing)
+        if (!want) { removeRemain(); return }
+        val items = if (real.isNotEmpty()) real else remainSample()
+        var created = false
+        if (remain == null) { buildRemain(); created = true }
+        val v = remain ?: return
+        if (created || items != remainShownItems || editing != remainShownEditing) {
+            remainShownItems = items; remainShownEditing = editing
+            v.update(items, editing)
+            applyRemainTouchMode()
+        }
+        if (created && editing) restack()
+    }
+
+    private fun remainFlags(): Int = if (editing) editFlags else normalFlags
+
+    /** 평소엔 사진 위도 게임이 눌리게(터치 통과), 조절 중에만 터치를 받는다 */
+    private fun remainAlpha(): Float = if (editing || useA11yWin) 1f else 0.8f
+
+    private fun applyRemainTouchMode() {
+        val lp = remainLp ?: return
+        val f = remainFlags(); val a = remainAlpha()
+        if (lp.flags == f && lp.alpha == a) return
+        lp.flags = f; lp.alpha = a
+        try { wm?.updateViewLayout(remain, lp) } catch (_: Exception) {}
+    }
+
+    // 창 위치·크기의 '지금 값'과 '목표 값' (px) — 목표를 향해 부드럽게 따라간다
+    private var rmX = 0f; private var rmY = 0f; private var rmW = 0f; private var rmH = 0f
+    private var rmTx = 0f; private var rmTy = 0f; private var rmTw = 0f; private var rmTh = 0f
+    private var rmTickPosted = false
+
+    @SuppressLint("ClickableViewAccessibility")
+    private fun buildRemain() {
+        val v = RemainView(uiCtx)
+        remain = v
+        val (sw, sh) = screenSize()
+        val saved = Prefs.remainRect(this)
+        val w: Int; val h: Int; val x: Int; val y: Int
+        if (saved != null) {
+            x = saved[0]; y = saved[1]; w = dp(saved[2]); h = dp(saved[3])
+        } else {
+            // 처음에는 화면 위쪽 가운데에 가로 한 줄 (사진 4장)
+            w = dp(4 * 56 + 3 * 3 + 20); h = dp(56 + 20)
+            x = max(0, (sw - w) / 2); y = (sh * 0.18f).toInt()
+        }
+        val minW = dp(56); val minH = dp(56)
+        val cw = w.coerceIn(minW, sw); val ch = h.coerceIn(minH, sh)
+        remainLp = WindowManager.LayoutParams(
+            cw, ch, overlayType(), remainFlags(), PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            this.x = x.coerceIn(-cw / 2, max(0, sw - cw / 2)); this.y = y.coerceIn(0, max(0, sh - ch / 2))
+            alpha = remainAlpha()
+        }
+        remainLp?.let {
+            rmX = it.x.toFloat(); rmY = it.y.toFloat(); rmW = it.width.toFloat(); rmH = it.height.toFloat()
+            rmTx = rmX; rmTy = rmY; rmTw = rmW; rmTh = rmH
+        }
+
+        var handle = 0
+        var sx = 0f; var sy = 0f
+        var ox = 0f; var oy = 0f; var w0 = 0f; var h0 = 0f
+        v.setOnTouchListener { _, ev ->
+            val lp = remainLp ?: return@setOnTouchListener false
+            when (ev.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    handle = v.hitHandle(ev.x, ev.y)
+                    sx = ev.rawX; sy = ev.rawY
+                    // 아직 목표로 가는 중이면 그 목표를 기준으로 이어서 조절한다
+                    ox = rmTx; oy = rmTy; w0 = rmTw; h0 = rmTh
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = ev.rawX - sx; val dy = ev.rawY - sy
+                    val (scw, sch) = screenSize()
+                    if (handle == 0) {
+                        // 이동은 손가락에 딱 붙어서 따라온다
+                        rmTx = ox + dx; rmTy = oy + dy
+                        rmX = rmTx; rmY = rmTy
+                        lp.x = rmX.roundToInt(); lp.y = rmY.roundToInt()
+                        try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
+                    } else {
+                        val k = RESIZE_DAMPING
+                        var nw = w0; var nh = h0
+                        if ((handle and BossStripView.H_RIGHT) != 0) nw = w0 + dx * k
+                        if ((handle and BossStripView.H_LEFT) != 0) nw = w0 - dx * k
+                        if ((handle and BossStripView.H_BOTTOM) != 0) nh = h0 + dy * k
+                        if ((handle and BossStripView.H_TOP) != 0) nh = h0 - dy * k
+                        nw = nw.coerceIn(minW.toFloat(), scw.toFloat())
+                        nh = nh.coerceIn(minH.toFloat(), sch.toFloat())
+                        // 반대편 모서리는 제자리에 둔다
+                        rmTw = nw; rmTh = nh
+                        rmTx = if ((handle and BossStripView.H_LEFT) != 0) ox + (w0 - nw) else ox
+                        rmTy = if ((handle and BossStripView.H_TOP) != 0) oy + (h0 - nh) else oy
+                        ensureRemainTick()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (handle != 0) ensureRemainTick()
+                    // 손을 떼면 지금(목표) 위치·크기를 저장한다
+                    val dens = resources.displayMetrics.density
+                    Prefs.setRemainRect(this, rmTx.roundToInt(), rmTy.roundToInt(),
+                        (rmTw / dens).roundToInt(), (rmTh / dens).roundToInt())
+                    handle = 0
+                    true
+                }
+                else -> false
+            }
+        }
+        try {
+            wm?.addView(v, remainLp)
+        } catch (e: Exception) {
+            remain = null; remainLp = null
+            Bus.log("⚠️ 남은 보스 창을 띄우지 못했습니다: ${e.javaClass.simpleName}")
+        }
+    }
+
+    private fun ensureRemainTick() {
+        if (rmTickPosted) return
+        rmTickPosted = true
+        main.post(remainTick)
+    }
+
+    /** 창 크기를 목표 크기로 조금씩 다가가게 한다 (뚝 바뀌지 않고 부드럽게) */
+    private val remainTick = object : Runnable {
+        override fun run() {
+            rmTickPosted = false
+            val v = remain ?: return
+            val lp = remainLp ?: return
+            fun step(c: Float, t: Float): Float {
+                val n = c + (t - c) * RESIZE_EASE
+                return if (kotlin.math.abs(t - n) < 0.6f) t else n
+            }
+            rmX = step(rmX, rmTx); rmY = step(rmY, rmTy)
+            rmW = step(rmW, rmTw); rmH = step(rmH, rmTh)
+            lp.x = rmX.roundToInt(); lp.y = rmY.roundToInt()
+            lp.width = rmW.roundToInt(); lp.height = rmH.roundToInt()
+            try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
+            if (rmX != rmTx || rmY != rmTy || rmW != rmTw || rmH != rmTh) {
+                rmTickPosted = true
+                main.postDelayed(this, 16)
+            }
+        }
+    }
+
+    private fun removeRemain() {
+        main.removeCallbacks(remainTick); rmTickPosted = false
+        remain?.let { try { wm?.removeView(it) } catch (_: Exception) {} }
+        remain = null; remainLp = null
+        remainShownItems = emptyList(); remainShownEditing = false
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -936,11 +1248,20 @@ class OverlayService : Service() {
             lp.x = lp.x.coerceIn(0, max(0, sw - dp(80))); lp.y = lp.y.coerceIn(0, max(0, sh - dp(40)))
             chip?.let { v -> try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {} }
         }
+        remainLp?.let { lp ->
+            lp.width = min(lp.width, sw); lp.height = min(lp.height, sh)
+            lp.x = lp.x.coerceIn(0, max(0, sw - lp.width)); lp.y = lp.y.coerceIn(0, max(0, sh - lp.height))
+            rmX = lp.x.toFloat(); rmY = lp.y.toFloat(); rmW = lp.width.toFloat(); rmH = lp.height.toFloat()
+            rmTx = rmX; rmTy = rmY; rmTw = rmW; rmTh = rmH
+            remain?.let { v -> try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {} }
+        }
         render()
     }
 
     override fun onDestroy() {
         main.removeCallbacks(fadeRunnable)
+        main.removeCallbacks(resizeTick)
+        main.removeCallbacks(remainTick)
         hideLoading()
         hideNotice()
         Bus.onCropOpened = null
@@ -948,6 +1269,7 @@ class OverlayService : Service() {
         Bus.onGameDisplay = null
         Bus.removeChangeListener(listener)
         hidePanel()
+        try { if (remain != null) wm?.removeView(remain) } catch (_: Exception) {}
         try { if (strip != null) wm?.removeView(strip) } catch (_: Exception) {}
         try { if (chip != null) wm?.removeView(chip) } catch (_: Exception) {}
         strip = null; chip = null
@@ -958,6 +1280,12 @@ class OverlayService : Service() {
         /** 이 시간 동안 안 쓰면 [보스설정] 버튼을 흐리게 한다 */
         private const val IDLE_FADE_MS = 60_000L
         private const val IDLE_ALPHA = 0.3f
+
+        /** 크기를 조절할 때 손가락 움직임 중 반영하는 비율 (1.0 보다 작을수록 천천히) */
+        private const val RESIZE_DAMPING = 0.8f
+
+        /** 화면에 그리는 크기가 목표 크기로 다가가는 비율(프레임당) — 작을수록 부드럽지만 느리다 */
+        private const val RESIZE_EASE = 0.30f
 
         /** 조절 화면에서 크기를 맞춰볼 때 쓰는 예시 (판 끝까지 간 경우 11장) */
         private val PREVIEW = listOf(
@@ -984,9 +1312,8 @@ class OverlayService : Service() {
  * 라운드 글자 없이 보스 사진만, 사진끼리 거의 붙여서 그린다.
  *
  * 조절 모드에서는 테두리에 주황 점 8개(네 모서리 + 네 변 가운데)가 생긴다.
- *   • 줄 방향의 양 끝 점 → 줄 길이 (넘치면 다음 줄로 · 자동 축소를 켜면 축소 기준)
- *   • 줄과 직각인 양 옆 점 → 사진 크기
- *   • 모서리 점 → 둘 다
+ *   • 어느 점을 끌든 줄바꿈 없이 전체 크기만 바뀐다 (한 줄 사진 수는 그대로)
+ *   • 변 가운데 점 → 그 변을 따라 크기 변경, 모서리 점 → 비율을 지키며 키움·줄임
  */
 class BossStripView(ctx: Context) : View(ctx) {
 
@@ -1012,7 +1339,8 @@ class BossStripView(ctx: Context) : View(ctx) {
     /** 조절 중에는 주황 테두리·점 자리를 넉넉히, 평소에는 게임을 덜 가리게 좁게 */
     private val pad get() = dp(if (editing) 14f else 2f).toInt()
 
-    private val circleCache = HashMap<String, Bitmap?>()
+    private val circles = BossCircles(ctx)
+    private val bmpPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
     private val editPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         style = Paint.Style.STROKE; color = Color.parseColor("#F39C12"); strokeWidth = dp(2.5f)
@@ -1053,6 +1381,23 @@ class BossStripView(ctx: Context) : View(ctx) {
     fun extraAcross(): Int = if (items.isEmpty()) 0 else (lineCount() - 1) * (d + gap)
 
     fun itemCount(): Int = items.size
+
+    /** 지금 한 줄에 놓인 사진 수 (크기를 조절할 때 이 수를 그대로 지켜 줄바꿈을 막는다) */
+    fun linesPerRow(): Int = perLine()
+
+    fun padPx(): Int = pad
+    fun gapPx(): Int = gap
+
+    /** 사진 지름 dd, 한 줄에 per 장일 때 이 뷰의 크기 (너비 to 높이) */
+    fun sizeFor(dd: Int, per: Int): Pair<Int, Int> {
+        val n = max(1, items.size)
+        val p = per.coerceIn(1, n)
+        val lines = (n + p - 1) / p
+        val len = p * dd + (p - 1) * gap
+        val across = lines * dd + (lines - 1) * gap
+        return if (vertical) (across + pad * 2) to (len + pad * 2)
+        else (len + pad * 2) to (across + pad * 2)
+    }
 
     /** 보스 수와 길이에 맞춰 사진 지름을 정한다 */
     private fun computeD(): Int {
@@ -1133,8 +1478,8 @@ class BossStripView(ctx: Context) : View(ctx) {
             val acr = line * (d + gap) + d / 2f
             val cx = if (vertical) pad + acr else pad + off
             val cy = if (vertical) pad + off else pad + acr
-            circle(it.boss)?.let { bmp ->
-                canvas.drawBitmap(bmp, null, RectF(cx - d / 2f, cy - d / 2f, cx + d / 2f, cy + d / 2f), null)
+            circles.get(it.boss, d)?.let { bmp ->
+                canvas.drawBitmap(bmp, null, RectF(cx - d / 2f, cy - d / 2f, cx + d / 2f, cy + d / 2f), bmpPaint)
             }
             ringPaint.color = if (it.special) Color.parseColor("#E74C3C") else Color.WHITE
             ringPaint.strokeWidth = if (it.special) max(dp(2f), d * 0.06f) else max(dp(1.2f), d * 0.03f)
@@ -1157,42 +1502,158 @@ class BossStripView(ctx: Context) : View(ctx) {
             }
         }
     }
+}
 
-    /** 보스 사진을 동그랗게 잘라 둔다 (지름별로 캐시) */
-    private fun circle(boss: String): Bitmap? {
-        val key = "$boss@$d"
-        if (circleCache.containsKey(key)) return circleCache[key]
-        if (circleCache.size > 120) circleCache.clear()
-        val f = AssetInstaller.displayFile(context, boss)
-        val src = try { if (f.exists()) BitmapFactory.decodeFile(f.absolutePath) else null } catch (_: Exception) { null }
-        val size = max(8, d)
-        val out = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
-        val c = Canvas(out)
-        val p = Paint(Paint.ANTI_ALIAS_FLAG)
-        // 동그라미 안쪽 바탕 — 밝은 게임 화면 위에서도 보스가 잘 보이게
-        p.shader = LinearGradient(0f, 0f, 0f, size.toFloat(),
-            Color.parseColor("#FF463C50"), Color.parseColor("#FF282332"), Shader.TileMode.CLAMP)
-        c.drawCircle(size / 2f, size / 2f, size / 2f, p)
-        p.shader = null
-        if (src != null) {
-            val clip = android.graphics.Path().apply {
-                addCircle(size / 2f, size / 2f, size / 2f, android.graphics.Path.Direction.CW)
-            }
-            c.save(); c.clipPath(clip)
-            val s = size * 0.92f
-            val scale = min(s / src.width, s / src.height)
-            val w = src.width * scale; val h = src.height * scale
-            val l = (size - w) / 2f; val t = (size - h) / 2f + size * 0.03f
-            c.drawBitmap(src, Rect(0, 0, src.width, src.height), RectF(l, t, l + w, t + h),
-                Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG))
-            c.restore()
-            src.recycle()
-        } else {
-            p.color = Color.WHITE; p.textAlign = Paint.Align.CENTER
-            p.textSize = size * 0.32f; p.typeface = Typeface.DEFAULT_BOLD
-            c.drawText(boss.take(2), size / 2f, size / 2f + p.textSize / 3f, p)
+/**
+ * 남은 보스(80R 예상) 사진을 보여 주는 창의 뷰. 배경은 완전히 투명하다.
+ *
+ * 사진은 창 크기에 맞춰 알아서 배치된다 — 창을 가로로 길게 하면 한 줄(4×1),
+ * 네모에 가깝게 하면 2×2, 세로로 길게 하면 세로 한 줄(1×4). 사진 크기도 창에 꽉 차게 맞춘다.
+ * 배치가 바뀔 때 사진이 제자리에서 새 자리로 미끄러지듯 움직인다.
+ *
+ * 퍼센트·글자 없이 사진만 보여 준다. [보스조절] 중에는 파란 테두리와 점 8개가 생긴다.
+ */
+class RemainView(ctx: Context) : View(ctx) {
+
+    private val density = ctx.resources.displayMetrics.density
+    private fun dp(v: Float) = v * density
+
+    private val circles = BossCircles(ctx)
+    private var items: List<String> = emptyList()
+    private var editing = false
+
+    /** 지금 쓰는 칸 수 (경계에서 배치가 깜빡이지 않게 기억해 둔다) */
+    private var cols = 0
+
+    private val pad get() = dp(10f)
+    private val gap get() = dp(3f)
+
+    /** 사진 한 장의 지금 그리는 자리 (목표 자리로 조금씩 다가간다) */
+    private class Cell(var x: Float, var y: Float, var d: Float)
+    private var cells: List<Cell> = emptyList()
+    private var snapNext = true
+
+    private val bmpPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
+    private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = Color.WHITE
+    }
+    private val editColor = Color.parseColor("#3498DB")
+    private val editPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = editColor; strokeWidth = dp(2.5f)
+    }
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = editColor }
+    private val handleRim = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        style = Paint.Style.STROKE; color = Color.WHITE; strokeWidth = dp(1.5f)
+    }
+
+    fun update(items: List<String>, editing: Boolean) {
+        if (items.size != this.items.size) snapNext = true   // 장수가 달라지면 새로 배치
+        this.items = items; this.editing = editing
+        invalidate()
+    }
+
+    /** 창 크기에 가장 크게 들어가는 칸 수를 골라, 사진마다 (x, y, 지름) 목표를 돌려준다 */
+    private fun computeTargets(): List<FloatArray> {
+        val n = items.size
+        if (n == 0 || width <= 0 || height <= 0) return emptyList()
+        val iw = width - pad * 2; val ih = height - pad * 2
+        fun dFor(c: Int): Float {
+            val rows = (n + c - 1) / c
+            return min((iw - (c - 1) * gap) / c, (ih - (rows - 1) * gap) / rows)
         }
-        circleCache[key] = out
+        var best = 1; var bestD = dFor(1)
+        for (c in 2..n) {
+            val dd = dFor(c)
+            if (dd > bestD + 0.5f) { best = c; bestD = dd }
+        }
+        // 경계에서 칸 수가 왔다갔다 하지 않게 — 지금 칸 수가 거의 비슷하게 크면 그대로 둔다
+        if (cols in 1..n) {
+            val cd = dFor(cols)
+            if (cd >= bestD * 0.96f) { best = cols; bestD = cd }
+        }
+        cols = best
+        val d = max(dp(12f), bestD)
+        val rows = (n + cols - 1) / cols
+        val gridH = rows * d + (rows - 1) * gap
+        val out = ArrayList<FloatArray>(n)
+        for (i in 0 until n) {
+            val r = i / cols; val c = i % cols
+            val inRow = if (r == rows - 1) n - r * cols else cols   // 마지막 줄은 가운데 정렬
+            val rowW = inRow * d + (inRow - 1) * gap
+            out.add(floatArrayOf(
+                pad + (iw - rowW) / 2f + c * (d + gap),
+                pad + (ih - gridH) / 2f + r * (d + gap),
+                d
+            ))
+        }
         return out
+    }
+
+    // ── 조절 점 (BossStripView 와 같은 8개) ──
+    private fun handlePoints(): List<Pair<Int, Pair<Float, Float>>> {
+        val l = pad / 2f; val t = pad / 2f
+        val r = width - pad / 2f; val b = height - pad / 2f
+        val cx = width / 2f; val cy = height / 2f
+        val L = BossStripView.H_LEFT; val R = BossStripView.H_RIGHT
+        val T = BossStripView.H_TOP; val B = BossStripView.H_BOTTOM
+        return listOf(
+            (L or T) to (l to t), T to (cx to t), (R or T) to (r to t),
+            L to (l to cy), R to (r to cy),
+            (L or B) to (l to b), B to (cx to b), (R or B) to (r to b)
+        )
+    }
+
+    /** 누른 곳이 어느 조절 점인지 (없으면 0) */
+    fun hitHandle(x: Float, y: Float): Int {
+        if (!editing) return 0
+        val r = dp(24f)
+        var best = 0; var bestDist = Float.MAX_VALUE
+        for ((code, p) in handlePoints()) {
+            val dx = x - p.first; val dy = y - p.second
+            val dist = dx * dx + dy * dy
+            if (kotlin.math.abs(dx) < r && kotlin.math.abs(dy) < r && dist < bestDist) {
+                best = code; bestDist = dist
+            }
+        }
+        return best
+    }
+
+    override fun onDraw(canvas: Canvas) {
+        val t = computeTargets()
+        var moving = false
+        if (t.isNotEmpty()) {
+            if (snapNext || cells.size != t.size) {
+                cells = t.map { Cell(it[0], it[1], it[2]) }
+                snapNext = false
+            }
+            for ((i, tg) in t.withIndex()) {
+                val c = cells[i]
+                c.x = ease(c.x, tg[0]); c.y = ease(c.y, tg[1]); c.d = ease(c.d, tg[2])
+                if (c.x != tg[0] || c.y != tg[1] || c.d != tg[2]) moving = true
+            }
+            for ((i, boss) in items.withIndex()) {
+                val c = cells[i]
+                circles.get(boss, c.d.roundToInt())?.let { bmp ->
+                    canvas.drawBitmap(bmp, null, RectF(c.x, c.y, c.x + c.d, c.y + c.d), bmpPaint)
+                }
+                ringPaint.strokeWidth = max(dp(1.2f), c.d * 0.03f)
+                canvas.drawCircle(c.x + c.d / 2f, c.y + c.d / 2f, c.d / 2f - ringPaint.strokeWidth / 2f, ringPaint)
+            }
+        }
+        if (editing) {
+            canvas.drawRoundRect(RectF(pad / 2f, pad / 2f, width - pad / 2f, height - pad / 2f),
+                dp(10f), dp(10f), editPaint)
+            for ((_, p) in handlePoints()) {
+                canvas.drawCircle(p.first, p.second, dp(8f), handlePaint)
+                canvas.drawCircle(p.first, p.second, dp(8f), handleRim)
+            }
+        }
+        if (moving) postInvalidateOnAnimation()
+    }
+
+    /** 현재 값 c 를 목표 값 t 쪽으로 조금 옮긴다 (거의 도착하면 딱 맞춘다) */
+    private fun ease(c: Float, t: Float): Float {
+        val n = c + (t - c) * 0.30f
+        return if (kotlin.math.abs(t - n) < 0.4f) t else n
     }
 }

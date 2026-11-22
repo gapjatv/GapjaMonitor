@@ -272,7 +272,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("인식용 보스 사진을 어떻게 할까요?")
             .setMessage(
                 "• 기본 사진 그대로 (추천): 앱에 들어 있는 보스·로비 사진으로 바로 시작합니다. " +
-                "인식이 잘 안 되는 보스만 게임 중 [보스설정 → 캡처] 로 추가하면 함께 씁니다.\n\n" +
+                "인식이 잘 안 되는 보스만 게임 중 [보스설정 → 보스캡처] 로 추가하면 함께 씁니다.\n\n" +
                 "• 직접 새로 등록: PC 사진은 빼고, 내가 캡처한 사진과 이 기기용(핸드폰) 기본 사진만 씁니다. " +
                 "핸드폰 기본 사진에 없는 보스·로비는 직접 등록해야 인식됩니다. 지금 등록된 내 사진: ${mine}장\n\n" +
                 "언제든 메인 화면 '인식용 사진' 에서 바꿀 수 있습니다." +
@@ -299,7 +299,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("보스 사진 등록하는 법")
             .setMessage(
                 "1. [시작] 을 누르고 게임을 켭니다.\n" +
-                "2. 보스가 나오면 게임 위 [보스설정 → 캡처] 를 누릅니다.\n" +
+                "2. 보스가 나오면 게임 위 [보스설정 → 보스캡처] 를 누릅니다.\n" +
                 "3. 두 손가락으로 확대해서 주황 네모로 보스만 감싸고, 보스 이름을 고른 뒤 [저장].\n" +
                 "4. 로비 화면(태초로비 · 침공로비)과 '다시하기' 화면(공통로비)도 같은 방법으로 등록하면 " +
                 "판이 끝날 때 보스 사진이 자동으로 초기화됩니다.\n\n" +
@@ -480,8 +480,8 @@ class MainActivity : AppCompatActivity() {
         col.addView(slider("사진 최대 크기", 20, 160, Prefs.overlayMaxDp(this), "dp") {
             Prefs.setOverlayMaxDp(this, it); Bus.settingsChanged()
         })
-        col.addView(body("위치·길이는 게임 화면 위의 [조절] 버튼으로 바꿉니다. " +
-                "[캡처] 버튼은 지금 화면에서 보스 사진을 잘라 등록합니다."))
+        col.addView(body("위치·길이는 게임 화면 위의 [보스설정 → 보스조절] 로 바꿉니다. " +
+                "[보스캡처] 버튼은 지금 화면에서 보스 사진을 잘라 등록합니다."))
         col.addView(btn("🔓 다른 앱 위에 표시 권한 허용", "#8E44AD") {
             if (OverlayService.canDraw(this)) toast("이미 허용되어 있습니다")
             else startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -635,6 +635,19 @@ class MainActivity : AppCompatActivity() {
                 text = label; setTextColor(color); textSize = 13f
             }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             addView(et, LinearLayout.LayoutParams(dp(72), dp(36)))
+            // 입력칸 옆에 작은 글씨로 분·초 — 숫자를 바꾸면 자동으로 따라 바뀐다
+            val hint = TextView(this@MainActivity).apply {
+                setTextColor(Color.parseColor("#FF95A5A6")); textSize = 11f
+                setSingleLine(true)
+                setPadding(dp(6), 0, 0, 0)
+                text = secToMinSec(et.text?.toString())
+            }
+            et.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(e: Editable?) { hint.text = secToMinSec(e?.toString()) }
+            })
+            addView(hint, LinearLayout.LayoutParams(dp(76), LinearLayout.LayoutParams.WRAP_CONTENT))
         }
 
         val green = Color.parseColor("#FF2ECC71"); val red = Color.parseColor("#FFE74C3C")
@@ -679,6 +692,18 @@ class MainActivity : AppCompatActivity() {
                 "경보음이 없는 보스는 경보 멘트(준비·변신주의·미티어대비 등)를 읽어 줍니다."))
     }
 
+    /** 초를 "(1분57초)" 꼴로. 59초 이하는 "(57초)", 딱 떨어지면 "(2분)". 숫자가 아니면 빈 글자 */
+    private fun secToMinSec(text: String?): String {
+        val sec = text?.trim()?.toIntOrNull() ?: return ""
+        if (sec < 0) return ""
+        val m = sec / 60; val r = sec % 60
+        return when {
+            m == 0 -> "(${r}초)"
+            r == 0 -> "(${m}분)"
+            else -> "(${m}분${r}초)"
+        }
+    }
+
     private data class Quad(val a: GameMode, val b: List<String>, val c: String, val d: Int)
 
     /** 고급 설정 — 기존 기능을 그대로 두되 평소엔 접어 둔다 */
@@ -708,6 +733,23 @@ class MainActivity : AppCompatActivity() {
         col.addView(h("80R 안내"))
         col.addView(slider("확정 후 안내 지연", 0, 10000, Prefs.announceDelayMs(this).toInt(), "ms") {
             Prefs.setAnnounceDelayMs(this, it)
+        })
+
+        col.addView(h("남은 보스 4마리 예측 (침공)"))
+        col.addView(body(
+            "침공에서 70R 보스가 나와 남은 후보가 4마리가 되면, 그 4마리를 사진으로 보여 주고 " +
+            "\"80라운드 예상보스는 그런트, 샤먼, 매지션, 사신이 남아 있습니다\" 처럼 읽어 줍니다. (PC판과 같은 기준) " +
+            "사진 크기·위치는 게임 위 [보스설정] → [보스조절] 에서 바꿉니다."
+        ))
+        col.addView(check("남은 보스 4마리 화면·음성 안내", Prefs.remainEnabled(this)) {
+            Prefs.setRemainEnabled(this, it)
+        })
+        col.addView(slider("70R 보스 인식 후 안내까지", 0, 30, Prefs.remainDelaySec(this), "초") {
+            Prefs.setRemainDelaySec(this, it)
+        })
+        col.addView(slider("예측 화면 표시 시간 (0 = 80R 보스가 나올 때까지 계속)", 0, 60,
+            Prefs.remainShowSec(this), "초") {
+            Prefs.setRemainShowSec(this, it)
         })
 
         col.addView(h("화면 공유 확인창 없애기 (뮤뮤플레이어 · 루팅 기기)"))
@@ -835,7 +877,7 @@ class MainActivity : AppCompatActivity() {
         }
         if (!Prefs.usePcTemplates(this) && Prefs.userTemplates(this).isEmpty()) {
             // 새로 등록 모드인데 아직 한 장도 없으면 인식은 안 되지만, 캡처하려면 시작은 해야 한다
-            toast("아직 등록한 사진이 없습니다. 게임에서 [보스설정 → 캡처] 로 등록해 주세요")
+            toast("아직 등록한 사진이 없습니다. 게임에서 [보스설정 → 보스캡처] 로 등록해 주세요")
         }
         if (!OverlayService.canDraw(this)) {
             toast("게임 위에 사진을 띄우려면 '다른 앱 위에 표시'를 허용해 주세요")

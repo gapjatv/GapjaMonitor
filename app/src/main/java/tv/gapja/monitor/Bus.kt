@@ -35,6 +35,28 @@ object Bus {
     /** 누적 기록 판 수 */
     @Volatile var recordedGames: Int = 0
 
+    /** 남은 보스 예측 화면에 띄울 보스들 (비어 있으면 창을 숨긴다) */
+    @Volatile var remaining: List<String> = emptyList()
+    private var remainingHide: Runnable? = null
+
+    /**
+     * 남은 보스 예측 화면을 띄운다.
+     * @param durationMs 이 시간 뒤 자동으로 닫는다. 0 이하면 80R 보스가 인식되거나 판이 끝날 때까지 계속 띄운다.
+     */
+    fun showRemaining(list: List<String>, durationMs: Long) {
+        main.post {
+            remainingHide?.let { main.removeCallbacks(it) }
+            remainingHide = null
+            remaining = list
+            fireChange()
+            if (durationMs > 0) {
+                val r = Runnable { remainingHide = null; remaining = emptyList(); fireChange() }
+                remainingHide = r
+                main.postDelayed(r, durationMs)
+            }
+        }
+    }
+
     /** 일시정지 중인지 (보스설정 메뉴 글자를 바꾼다) */
     @Volatile var paused: Boolean = false
 
@@ -84,7 +106,7 @@ object Bus {
 
     fun notice(text: String) { main.post { try { onNotice?.invoke(text) } catch (_: Exception) {} } }
 
-    /** [보스설정 → 끄기] 를 누르면 메인 화면을 닫는다 */
+    /** [보스설정 → 종료] 를 누르면 메인 화면을 닫는다 */
     var onExit: (() -> Unit)? = null
 
     fun exitApp() { main.post { try { onExit?.invoke() } catch (_: Exception) {} } }
@@ -129,6 +151,13 @@ object Bus {
             boss80R = b80
             recordedGames = n
             if (order.isEmpty()) { predicted = null; predictedConf = 0.0 }
+            // 판이 끝났거나, 남은 후보가 달라졌으면(80R 보스가 나옴 · 되돌리기) 예측 화면을 닫는다
+            if (remaining.isNotEmpty() &&
+                remaining.toSet() != tv.gapja.monitor.core.Predictor.remainingMainCandidates(order).toSet()) {
+                remainingHide?.let { main.removeCallbacks(it) }
+                remainingHide = null
+                remaining = emptyList()
+            }
             fireChange()
         }
     }

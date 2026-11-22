@@ -22,7 +22,7 @@ import java.util.Locale
 import kotlin.math.max
 
 /**
- * 캡처함 — 게임 중 [보스설정 → 캡처] 로 저장한 화면 목록.
+ * 캡처함 — 게임 중 [보스설정 → 보스캡처] 로 저장한 화면 목록.
  *   • 누르면 자르기 화면이 열린다 (한 장에서 여러 보스를 차례로 잘라 넣을 수 있다)
  *   • 길게 누르면 지우기
  */
@@ -57,7 +57,7 @@ class SnapsActivity : AppCompatActivity() {
             setTypeface(typeface, Typeface.BOLD)
         })
         col.addView(TextView(this).apply {
-            text = "게임 중 [보스설정 → 캡처] 로 저장한 화면이에요. 누르면 잘라서 보스·로비 사진으로 등록하고, " +
+            text = "게임 중 [보스설정 → 보스캡처] 로 저장한 화면이에요. 누르면 잘라서 보스·로비 사진으로 등록하고, " +
                     "길게 누르면 지웁니다.\n초록 테두리 + ✔ 표시 = 이미 잘라서 등록한 캡처 (무엇을 등록했는지 아래에 적혀 있어요)."
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
             setPadding(0, dp(6), 0, dp(8))

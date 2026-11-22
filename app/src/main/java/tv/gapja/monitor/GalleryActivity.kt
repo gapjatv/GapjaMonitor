@@ -50,7 +50,7 @@ class GalleryActivity : AppCompatActivity() {
             text = if (Prefs.usePcTemplates(this@GalleryActivity))
                 "지금은 기본 사진을 함께 쓰는 중입니다. 아래 ✔ 는 직접 등록한 사진이 있는 항목이에요. " +
                         "✔ 항목은 내 사진만 쓰고 그 보스의 기본 사진은 쓰지 않습니다."
-            else "지금은 직접 등록한 사진만 씁니다. ○ 인 항목은 아직 인식되지 않으니 [보스설정 → 캡처] 로 등록해 주세요."
+            else "지금은 직접 등록한 사진만 씁니다. ○ 인 항목은 아직 인식되지 않으니 [보스설정 → 보스캡처] 로 등록해 주세요."
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
             setPadding(0, dp(6), 0, 0)
         })
@@ -102,7 +102,7 @@ class GalleryActivity : AppCompatActivity() {
         section(col, "로비 화면 (인식되면 보스 사진 초기화)", lobbies, "아직 없습니다. 자르기 화면에서 '태초로비 · 침공로비 · 공통로비' 를 골라 넣어 주세요.")
         section(col, "인식용 사진 · 태초 보스", normal, null)
         section(col, "인식용 사진 · 침공 보스 (침공_) · 침공특수보스 · 침공 히든보스", inv, null)
-        section(col, "직접 캡처한 보조 사진 (_2 ~ _4)", extras, "아직 없습니다. 게임 위 [보스설정 → 캡처] 로 추가할 수 있습니다.")
+        section(col, "직접 캡처한 보조 사진 (_2 ~ _4)", extras, "아직 없습니다. 게임 위 [보스설정 → 보스캡처] 로 추가할 수 있습니다.")
         section(col, "배속 표시 (배속 자동 인식용)", speeds, null)
 
         val disp = (File(filesDir, "display").listFiles { f -> f.name.lowercase().endsWith(".png") } ?: emptyArray())

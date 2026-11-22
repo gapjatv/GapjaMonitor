@@ -164,7 +164,7 @@ class CaptureService : Service() {
                 if (session.activationOrder.isNotEmpty()) Bus.log("🔄 [리셋] 보스 사진을 초기화합니다.")
                 endGame()
             }
-            // [보스설정 → 끄기] 감시·오버레이를 멈추고 앱을 닫는다
+            // [보스설정 → 종료] 감시·오버레이를 멈추고 앱을 닫는다
             ACTION_EXIT -> {
                 val doExit = {
                     if (running || projection != null) stopEverything()
@@ -901,8 +901,40 @@ class CaptureService : Service() {
         }
 
         // 과거와 같은 순서인지 — 같으면 80R 메인보스를 미리 알려준다
-        if (!special && !invHidden) checkSequenceMatch()
+        if (!special && !invHidden) {
+            checkSequenceMatch()
+            checkRemainingFour()
+        }
         return true
+    }
+
+    /**
+     * 침공에서 남은 메인보스 후보가 4마리가 되면(= 70R 보스가 나온 직후) 80R 예상 보스를
+     * 화면(사진 4장)과 음성으로 알려 준다. PC판 미출현 팝업과 같은 기준이다. (판당 1회)
+     *   예) "80라운드 예상보스는 그런트, 샤먼, 매지션, 사신이 남아 있습니다"
+     */
+    /** 예약된 안내를 구분하는 번호 — 되돌리기·재예약 때 올려서 먼저 걸어 둔 안내를 취소한다 */
+    private var remainSeq = 0
+
+    private fun checkRemainingFour() {
+        if (!Prefs.remainEnabled(this)) return
+        if (session.remainAnnounced) return
+        val rem = Predictor.remainingToAnnounce(session.activationOrder, session.mode) ?: return
+        session.remainAnnounced = true
+        val gen = gameGen
+        val mine = ++remainSeq
+        val delayMs = Prefs.remainDelaySec(this) * 1000L
+        Bus.log("⏳ [80R 예상보스] 남은 후보 ${rem.size}마리(${rem.joinToString(", ")}) — " +
+                "${delayMs / 1000}초 뒤에 알려 줍니다.")
+        handlerOn().postDelayed({
+            // 그 사이 판이 끝났거나(초기화), 보스를 되돌려 후보가 달라졌으면 알리지 않는다
+            if (gen != gameGen || mine != remainSeq) return@postDelayed
+            val now = Predictor.remainingToAnnounce(session.activationOrder, session.mode)
+                ?: return@postDelayed
+            Bus.log("🔮 [80R 예상보스] 남은 후보: ${now.joinToString(", ")}")
+            Bus.showRemaining(now, Prefs.remainShowSec(this) * 1000L)
+            speaker.say(Predictor.remainingSpeech(now))
+        }, delayMs)
     }
 
     /**
@@ -941,6 +973,7 @@ class CaptureService : Service() {
             Bus.log("↩️ 되돌릴 보스가 없습니다."); return
         }
         streak.remove(name)
+        remainSeq++   // 예약돼 있던 남은 보스 안내 취소
         Bus.log("↩️ [되돌리기] '$name' 을 목록에서 제거했습니다. " +
                 "(5초 동안 다시 인식하지 않습니다)")
         Bus.onState(session, seq)

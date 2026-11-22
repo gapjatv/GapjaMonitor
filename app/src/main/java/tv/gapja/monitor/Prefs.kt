@@ -204,6 +204,38 @@ object Prefs {
     fun setChipPos(ctx: Context, x: Int, y: Int) =
         sp(ctx).edit().putInt("chip_x", x).putInt("chip_y", y).apply()
 
+    // ── 남은 보스 예측 화면 (침공 70R 보스가 나온 뒤 후보 4마리) ──
+
+    /** 남은 보스 4마리를 화면·음성으로 알려 줄지 */
+    fun remainEnabled(ctx: Context): Boolean = sp(ctx).getBoolean("remain_on", true)
+
+    fun setRemainEnabled(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean("remain_on", on).apply()
+
+    /** 70R 보스가 나온 뒤 몇 초 있다가 알려 줄지 (PC 미출현 팝업: 6초) */
+    fun remainDelaySec(ctx: Context): Int = sp(ctx).getInt("remain_delay", 6).coerceIn(0, 60)
+
+    fun setRemainDelaySec(ctx: Context, sec: Int) =
+        sp(ctx).edit().putInt("remain_delay", sec.coerceIn(0, 60)).apply()
+
+    /** 예측 화면을 몇 초 띄울지 (PC 미출현 팝업: 5초). 0 이면 80R 보스가 인식되거나 리셋될 때까지 계속 */
+    fun remainShowSec(ctx: Context): Int = sp(ctx).getInt("remain_show", 5).coerceIn(0, 120)
+
+    fun setRemainShowSec(ctx: Context, sec: Int) =
+        sp(ctx).edit().putInt("remain_show", sec.coerceIn(0, 120)).apply()
+
+    /** 예측 화면의 위치(px)와 크기(dp). 처음(저장 전)에는 null → 화면 위쪽 가운데에 가로 한 줄 */
+    fun remainRect(ctx: Context): IntArray? {
+        val s = sp(ctx)
+        if (!s.contains("remain_w")) return null
+        return intArrayOf(s.getInt("remain_x", 0), s.getInt("remain_y", 0),
+            s.getInt("remain_w", 0), s.getInt("remain_h", 0))
+    }
+
+    fun setRemainRect(ctx: Context, xPx: Int, yPx: Int, wDp: Int, hDp: Int) =
+        sp(ctx).edit().putInt("remain_x", xPx).putInt("remain_y", yPx)
+            .putInt("remain_w", wDp).putInt("remain_h", hDp).apply()
+
     // ── 보스설정 버튼 ──
 
     /** [보스설정] 버튼 크기(%) — 130 이 기본 */
