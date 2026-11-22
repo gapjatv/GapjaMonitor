@@ -69,6 +69,12 @@ class CaptureService : Service() {
     /** 깐깐 검사 대상의 연속 인식 횟수 */
     private val streak = HashMap<String, Int>()
 
+    /** 핸드폰이면 true (뮤뮤·x86 에뮬레이터는 false) — 폰 전용 오인식 방지에 쓴다 */
+    private val isPhoneDevice: Boolean = AssetInstaller.deviceTemplateFolder() == "templates_phone"
+
+    /** 오인식 차단 로그는 30초에 한 번만 (로그 도배 방지) */
+    private var lastGuardLogAt = 0L
+
     /** 화면을 이 비율로 줄여서 매칭한다 (1.0 = 원본). 작을수록 빠르다 */
     private var downscale = 0.5
 
@@ -769,10 +775,13 @@ class CaptureService : Service() {
         // PC 사진을 쓸 때는 PC판 기준값(대부분 60%)을,
         // 폰에서 새로 등록한 사진만 쓸 때는 폰판 기준값(72%)을 쓴다.
         // 폰 사진은 크기가 정확히 맞아서 높은 기준으로도 잘 잡히고, 엉뚱한 곳(로비 그림 등)에 덜 걸린다.
-        val th = if (Prefs.usePcTemplates(this))
+        val th0 = if (Prefs.usePcTemplates(this))
             BossCatalog.threshold(name, session.mode, PcDefaults.thresholds(session.mode, Prefs.thresholds(this)))
         else BossCatalog.threshold(name, session.mode, Prefs.thresholds(this))
         val strict = BossCatalog.isStrict(name, Prefs.strictBosses(this))
+        // 핸드폰 전용 오인식 방지 (양술사) — 뮤뮤(x86)는 해당 없음
+        val guard = isPhoneDevice && name in BossCatalog.PHONE_GUARD
+        val th = if (guard) max(th0, BossCatalog.PHONE_GUARD_MIN_PCT / 100.0) else th0
 
         // 발열 줄이기: 이 기기에서 직접 등록한 사진은 크기가 거의 같으므로 크기 비교를 3단계만 한다
         val scales = if (Prefs.powerSave(this) && templates.bossFileIsUser(name, session.mode))
@@ -841,12 +850,22 @@ class CaptureService : Service() {
             return false
         }
 
-        // ⑤ 깐깐 검사
-        if (strict) {
-            if (out.psr < BossCatalog.MIN_PSR) { streak.remove(name); return false }
+        // ⑤ 깐깐 검사 (폰 오인식 방지 대상은 PSR 없이 윤곽선 + 연속프레임만)
+        if (strict || guard) {
+            if (strict && out.psr < BossCatalog.MIN_PSR) { streak.remove(name); return false }
             if (tileEdge < 0) {
                 val ev = matcher.verifyEdge(scr, tpl, out.x, out.y, out.w, out.h)
-                if (ev < BossCatalog.MIN_EDGE_SCORE) { streak.remove(name); return false }
+                val need = if (guard) max(BossCatalog.MIN_EDGE_SCORE, BossCatalog.PHONE_GUARD_MIN_EDGE)
+                           else BossCatalog.MIN_EDGE_SCORE
+                if (ev < need) {
+                    streak.remove(name)
+                    if (guard && now - lastGuardLogAt >= 30_000L) {
+                        lastGuardLogAt = now
+                        Bus.log("🛡 [$name 오인식 차단] 정확도 ${pct(out.score)} 였지만 윤곽선 ${pct(ev)} 로 " +
+                                "모양이 달라 무시했습니다. (기준 ${pct(need)})")
+                    }
+                    return false
+                }
             }
             val n = (streak[name] ?: 0) + 1
             streak[name] = n

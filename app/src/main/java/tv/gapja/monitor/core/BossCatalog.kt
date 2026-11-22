@@ -133,6 +133,21 @@ object BossCatalog {
         return THRESHOLD_DEFAULT / 100.0
     }
 
+    /**
+     * 핸드폰 전용 오인식 방지 대상 (v2.5).
+     *
+     * 양술사 사진은 배경(흙·풀)이 많고 회색 톤이라, 폰에서 회색·어두운 앱 화면에도 점수가 52% 안팎으로 나왔다.
+     * 그래서 폰에서만 ① 기준값을 올리고 ② 윤곽선(모양)을 확인하고 ③ 2프레임 연속 보여야 인정한다.
+     * (뮤뮤는 이 값을 쓰지 않는다)
+     */
+    val PHONE_GUARD: Set<String> = setOf("양술사")
+
+    /** 폰 오인식 방지 대상의 최소 정확도 (%) — 좁게 다시 자른 사진은 진짜일 때 90% 안팎이 나온다 */
+    const val PHONE_GUARD_MIN_PCT = 62
+
+    /** 폰 오인식 방지 대상의 윤곽선 최소치 (진짜 0.5 이상 / 앱 화면 0.25 이하로 실측) */
+    const val PHONE_GUARD_MIN_EDGE = 0.40
+
     /** 깐깐 검사 대상인지 */
     fun isStrict(name: String, extra: Set<String> = emptySet()): Boolean =
         name in STRICT_BOSSES || name in extra

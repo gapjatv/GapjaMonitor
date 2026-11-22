@@ -30,8 +30,9 @@ object AssetInstaller {
      *   3: 핸드폰 기본 사진 15장 (github.com/gapjatv/png, 2026-11-21)
      *   4: 윔 경보음(alarms/윔.mp3) 추가, 핸드폰 기본 사진 고기슬라임·블랑카·침공로비 교체 (2026-11-21 19:35)
      *   5: 뮤뮤 기본 사진 17장 (templates_mumu — 보스 14장 + 태초로비·침공로비(마계 포탈)·공통로비, 2026-11-21 21:43)
+     *   6: 핸드폰 양술사 사진을 캐릭터 중심으로 좁게 다시 자름 (앱 화면 오인식 방지, 2026-11-22)
      */
-    private const val VERSION = 5
+    private const val VERSION = 6
 
     private val FOLDERS = listOf("templates", "display", "voices", "alarms")
 
