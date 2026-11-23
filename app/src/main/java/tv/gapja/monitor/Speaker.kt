@@ -2,7 +2,9 @@ package tv.gapja.monitor
 
 import android.content.Context
 import android.media.AudioAttributes
+import android.media.AudioManager
 import android.media.MediaPlayer
+import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import java.io.File
@@ -22,6 +24,10 @@ import java.util.Locale
  * 한 번에 하나만 재생한다 (겹쳐 나오면 알아들을 수 없다).
  * 재생 중에 새 안내가 오면 끊지 않고 순서대로 이어서 재생한다. (PC판 음성 큐와 같다)
  * 위험 경보는 타이밍이 중요해서 줄 맨 앞에 끼워 넣는다.
+ *
+ * 🔊 소리 크기 (v2.7): MP3·내장 TTS 모두 '미디어' 소리로 낸다.
+ *    예전에는 음성비서용 소리(USAGE_ASSISTANT)로 내서, 기기에 따라 폰 볼륨을 줄여도 크게 나왔다.
+ *    이제 폰 옆 볼륨 버튼(미디어 볼륨)을 따라 커지고 작아지며, 0 이면 소리가 나지 않는다.
  */
 class Speaker(private val ctx: Context) {
 
@@ -42,6 +48,8 @@ class Speaker(private val ctx: Context) {
             tts = TextToSpeech(ctx) { status ->
                 ready = status == TextToSpeech.SUCCESS
                 if (ready) {
+                    // 내장 TTS 도 미디어 볼륨을 따르게 한다
+                    try { tts?.setAudioAttributes(MEDIA_ATTRS) } catch (_: Exception) {}
                     tts?.language = Locale.KOREA
                     tts?.setSpeechRate(Prefs.speechRate(ctx))
                 } else {
@@ -87,7 +95,7 @@ class Speaker(private val ctx: Context) {
         if (!ready) return
         try {
             tts?.setSpeechRate(Prefs.speechRate(ctx))
-            tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "gapja")
+            tts?.speak(text, TextToSpeech.QUEUE_ADD, mediaParams(), "gapja")
         } catch (e: Exception) {
             Log.w(TAG, "읽기 실패", e)
         }
@@ -119,7 +127,7 @@ class Speaker(private val ctx: Context) {
         } else if (ready) {
             try {
                 tts?.setSpeechRate(Prefs.speechRate(ctx))
-                tts?.speak(text, TextToSpeech.QUEUE_ADD, null, "gapja_warn")
+                tts?.speak(text, TextToSpeech.QUEUE_ADD, mediaParams(), "gapja_warn")
             } catch (_: Exception) {}
         }
         return "멘트 \"$text\""
@@ -146,12 +154,8 @@ class Speaker(private val ctx: Context) {
     private fun startNow(f: File) {
         try {
             player = MediaPlayer().apply {
-                setAudioAttributes(
-                    AudioAttributes.Builder()
-                        .setUsage(AudioAttributes.USAGE_ASSISTANT)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                        .build()
-                )
+                // 미디어 소리로 재생 → 폰 볼륨(미디어 볼륨)에 따라 크기가 바뀐다
+                setAudioAttributes(MEDIA_ATTRS)
                 setDataSource(f.absolutePath)
                 setOnCompletionListener { playNext() }
                 setOnErrorListener { _, _, _ -> playNext(); true }
@@ -211,8 +215,19 @@ class Speaker(private val ctx: Context) {
             .firstOrNull { it.exists() && it.length() > MIN_AUDIO_BYTES }
     }
 
+    /** 내장 TTS 에 '미디어 소리로 읽어라' 고 알려 주는 값 (setAudioAttributes 를 무시하는 엔진 대비) */
+    private fun mediaParams(): Bundle = Bundle().apply {
+        putInt(TextToSpeech.Engine.KEY_PARAM_STREAM, AudioManager.STREAM_MUSIC)
+    }
+
     companion object {
         private const val TAG = "Speaker"
+
+        /** 미디어 볼륨을 따르는 소리 설정 (MP3·TTS 공통) */
+        private val MEDIA_ATTRS: AudioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+            .build()
 
         /** [보스별 음성 바꾸기] 로 지정한 보스 인식 음성 (원본은 건드리지 않는다) */
         fun userVoice(ctx: Context, boss: String): File =
