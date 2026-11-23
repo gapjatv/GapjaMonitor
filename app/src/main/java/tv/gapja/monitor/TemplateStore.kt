@@ -85,9 +85,12 @@ class TemplateStore(private val ctx: Context) {
     //  앱에 들어 있던 기본 사진(핸드폰 기본·PC 사진)은 인식에서 뺀다.
     //  기본 사진 파일은 지우지 않고 남겨 둔다 → 내 사진을 지우면 기본 사진이 다시 쓰인다.
 
-    /** 그 이름(`그런트` 또는 `침공_그런트`)으로 내가 등록한 사진들 — 기본 자리 먼저, 그다음 보조 */
+    /**
+     * 그 이름(`그런트` 또는 `침공_그런트`)으로 내가 등록한 사진들 — 기본 자리 먼저, 그다음 보조.
+     * 내 사진은 기본 1장 + 보조 1장(_2)까지만 쓴다 (v2.8). 예전에 등록한 _3·_4 는 쓰지 않는다.
+     */
     fun userShots(base: String): List<String> =
-        (listOf("$base.png") + BossCatalog.EXTRA_SHOT_SUFFIXES.map { "$base$it.png" })
+        listOf("$base.png", "$base$USER_EXTRA.png")
             .filter { isUser(it) && File(dir, it).exists() }
 
     /**
@@ -136,10 +139,7 @@ class TemplateStore(private val ctx: Context) {
             mode == GameMode.INVASION && !PcDefaults.isLobby(name) -> listOf("${INVASION_PREFIX}$name", name)
             else -> listOf(name)
         }
-        return bases.any { b ->
-            (listOf("$b.png") + BossCatalog.EXTRA_SHOT_SUFFIXES.map { "$b$it.png" })
-                .any { isUser(it) && File(dir, it).exists() }
-        }
+        return bases.any { b -> userShots(b).isNotEmpty() }
     }
 
     /** 그 보스 인식에 쓰는 기본 사진이 내가 등록한 사진인지 (발열 줄이기용) */
@@ -171,7 +171,9 @@ class TemplateStore(private val ctx: Context) {
         if (cur.exists()) cur.copyTo(tmp, overwrite = true)
         b.copyTo(cur, overwrite = true)
         if (tmp.exists()) tmp.renameTo(b) else b.delete()
-        cache.clear(); generation++; true
+        cache.clear(); generation++
+        GitHubSync.syncFile(ctx, name)
+        true
     } catch (_: Exception) { false }
 
     /** 앱에 들어 있던 기본 사진으로 되돌린다 (내 사진 표시도 지운다) */
@@ -180,7 +182,9 @@ class TemplateStore(private val ctx: Context) {
         val path = AssetInstaller.bundledTemplatePath(ctx, name) ?: return false
         ctx.assets.open(path).use { ins -> File(dir, name).outputStream().use { ins.copyTo(it) } }
         Prefs.removeUserTemplate(ctx, name)
-        cache.clear(); generation++; true
+        cache.clear(); generation++
+        GitHubSync.syncFile(ctx, name)     // 내 사진이 아니게 됐으니 깃허브에서도 지운다
+        true
     } catch (_: Exception) { false }
 
     /** 사진을 지운다 (되돌릴 수 있게 보관함에 남긴다) */
@@ -188,7 +192,9 @@ class TemplateStore(private val ctx: Context) {
         backup(name)
         val ok = File(dir, name).delete()
         Prefs.removeUserTemplate(ctx, name)
-        cache.clear(); generation++; ok
+        cache.clear(); generation++
+        GitHubSync.syncFile(ctx, name)     // 깃허브에서도 지운다 (깃허브 기록에는 남아서 되살릴 수 있다)
+        ok
     } catch (_: Exception) { false }
 
     /** 모드에 맞는 기본 템플릿 — 침공이면 '침공_' 사진을 먼저 쓴다 */
@@ -239,19 +245,41 @@ class TemplateStore(private val ctx: Context) {
                     (mode == GameMode.INVASION && usable("${INVASION_PREFIX}$it.png"))
         }
 
+    /** 보스(로비) 이름과 모드로 사진 이름의 앞부분을 만든다 — `그런트` / `침공_그런트` / `태초로비` */
+    fun baseName(boss: String, mode: GameMode): String =
+        // 로비 화면(태초로비·침공로비·공통로비)은 이름에 모드가 들어 있어 '침공_' 을 붙이지 않는다
+        if (mode == GameMode.INVASION && !PcDefaults.isLobby(boss)) "${INVASION_PREFIX}$boss" else boss
+
+    /** 이미 내가 등록한 보조 사진(_2)이 있는지 — 있으면 새로 등록할 때 그 보조 사진을 바꾼다 */
+    fun hasUserExtra(boss: String, mode: GameMode): Boolean {
+        val n = "${baseName(boss, mode)}$USER_EXTRA.png"
+        return isUser(n) && File(dir, n).exists()
+    }
+
     /**
      * 직접 캡처해서 잘라낸 사진을 저장한다.
      *
-     * @param asExtra true 면 보조 사진(_2, _3, _4 중 빈 자리)으로, false 면 기본 사진을 바꾼다
-     * @return 저장한 파일 이름 (보조 자리가 꽉 찼으면 _4 를 덮어쓴다)
+     * 내 사진은 보스마다 기본 1장 + 보조 1장까지 (v2.8).
+     *   • asExtra = false → 기본 사진 자리({이름}.png) 에 넣는다
+     *   • asExtra = true  → 보조 사진 자리({이름}_2.png) 에 넣는다. 이미 보조 사진이 있으면 그것을 지우고 새 사진으로 바꾼다
+     *     (예전에 등록한 _3·_4 내 사진도 이때 같이 정리한다)
+     * 바뀌거나 지워지는 사진은 templates_bak 에 보관 → '이전 사진으로 되돌리기'
+     *
+     * @return 저장한 파일 이름
      */
     fun saveCrop(bmp: Bitmap, boss: String, mode: GameMode, asExtra: Boolean): String? {
-        // 로비 화면(태초로비·침공로비·공통로비)은 이름에 모드가 들어 있어 '침공_' 을 붙이지 않는다
-        val base = if (mode == GameMode.INVASION && !PcDefaults.isLobby(boss)) "${INVASION_PREFIX}$boss" else boss
-        val name = if (!asExtra) "$base.png" else {
-            BossCatalog.EXTRA_SHOT_SUFFIXES.map { "$base$it.png" }
-                .firstOrNull { !File(dir, it).exists() }
-                ?: "$base${BossCatalog.EXTRA_SHOT_SUFFIXES.last()}.png"
+        val base = baseName(boss, mode)
+        val name = if (!asExtra) "$base.png" else "$base$USER_EXTRA.png"
+        val removed = ArrayList<String>()
+        if (asExtra) {
+            for (sfx in BossCatalog.EXTRA_SHOT_SUFFIXES) {
+                val n = "$base$sfx.png"
+                if (n == name || !isUser(n)) continue
+                val old = File(dir, n)
+                if (old.exists()) { backup(n); old.delete() }
+                Prefs.removeUserTemplate(ctx, n)
+                removed.add(n)
+            }
         }
         return try {
             val f = File(dir, name)
@@ -263,6 +291,8 @@ class TemplateStore(private val ctx: Context) {
             Backup.saveCopy(ctx, f)
             cache.clear()
             generation++
+            // 깃허브 사진 저장소에도 올린다 (열쇠가 있고 자동 저장이 켜져 있을 때만)
+            GitHubSync.syncFiles(ctx, listOf(name) + removed)
             name
         } catch (e: Exception) {
             Log.w(TAG, "저장 실패: $name", e); null
@@ -281,6 +311,7 @@ class TemplateStore(private val ctx: Context) {
     fun importAll(uris: List<Uri>): Pair<Int, List<String>> {
         var ok = 0
         val skipped = ArrayList<String>()
+        val imported = ArrayList<String>()
         for (u in uris) {
             // 백업 폴더에서 가져올 때 붙는 ' (1)' 같은 꼬리는 떼어낸다
             val name = displayName(u)?.replace(Regex(" \\(\\d+\\)(?=\\.png$)", RegexOption.IGNORE_CASE), "")
@@ -292,6 +323,7 @@ class TemplateStore(private val ctx: Context) {
                     File(dir, name).outputStream().use { outs -> ins.copyTo(outs) }
                 }
                 Prefs.addUserTemplate(ctx, name)
+                imported.add(name)
                 ok++
             } catch (e: Exception) {
                 Log.w(TAG, "복사 실패: $name", e); skipped.add(name)
@@ -299,6 +331,7 @@ class TemplateStore(private val ctx: Context) {
         }
         cache.clear()
         generation++
+        GitHubSync.syncFiles(ctx, imported)
         return ok to skipped
     }
 
@@ -328,6 +361,9 @@ class TemplateStore(private val ctx: Context) {
 
         /** 침공 전용 인식 사진 접두어 (PC판과 같다) */
         const val INVASION_PREFIX = "침공_"
+
+        /** 내 사진의 보조 자리 — 보스마다 보조는 1장만 (v2.8) */
+        const val USER_EXTRA = "_2"
 
         /** 사진이 바뀔 때마다 올라간다 — 감시 중인 서비스가 캐시를 비우게 한다 */
         @Volatile var generation: Int = 0

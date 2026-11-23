@@ -402,4 +402,47 @@ object Prefs {
 
     fun setAssetsVersion(ctx: Context, v: Int) =
         sp(ctx).edit().putInt("assets_ver", v).apply()
+
+    /** 마지막으로 풀어 놓은 기본 자료의 지문 (빌드할 때 깃허브 사진이 바뀌면 달라진다, v2.8) */
+    fun assetsStamp(ctx: Context): String = sp(ctx).getString("assets_stamp", "") ?: ""
+
+    fun setAssetsStamp(ctx: Context, v: String) =
+        sp(ctx).edit().putString("assets_stamp", v).apply()
+
+    // ── 깃허브 자동 저장 (v2.8) ──────────────────────────────────
+
+    /** 깃허브 열쇠(토큰) — 이 기기 안에만 저장한다. 코드에는 넣지 않는다 */
+    fun ghToken(ctx: Context): String = (sp(ctx).getString("gh_token", "") ?: "").trim()
+
+    fun setGhToken(ctx: Context, v: String) =
+        sp(ctx).edit().putString("gh_token", v.trim()).apply()
+
+    /** 등록·삭제할 때 자동으로 깃허브에 맞출지 (열쇠가 있을 때만 동작) */
+    fun ghSyncOn(ctx: Context): Boolean = sp(ctx).getBoolean("gh_sync_on", true)
+
+    fun setGhSyncOn(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean("gh_sync_on", on).apply()
+
+    /** 깃허브에 맞추기를 기다리는 사진 이름들 (인터넷이 끊겨도 잊지 않게 저장해 둔다) */
+    fun ghPending(ctx: Context): Set<String> = synchronized(ghLock) {
+        sp(ctx).getStringSet("gh_pending", emptySet())?.toSet() ?: emptySet()
+    }
+
+    fun addGhPending(ctx: Context, names: Collection<String>) = synchronized(ghLock) {
+        val set = ghPending(ctx).toMutableSet(); set.addAll(names)
+        sp(ctx).edit().putStringSet("gh_pending", set).apply()
+    }
+
+    fun removeGhPending(ctx: Context, name: String) = synchronized(ghLock) {
+        val set = ghPending(ctx).toMutableSet(); set.remove(name)
+        sp(ctx).edit().putStringSet("gh_pending", set).apply()
+    }
+
+    /** 깃허브 자동 저장의 최근 결과 (메인 화면 표시용) */
+    fun ghStatus(ctx: Context): String = sp(ctx).getString("gh_status", "") ?: ""
+
+    fun setGhStatus(ctx: Context, v: String) =
+        sp(ctx).edit().putString("gh_status", v).apply()
+
+    private val ghLock = Any()
 }

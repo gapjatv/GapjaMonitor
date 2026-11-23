@@ -3,6 +3,9 @@
 
     <!-- 포그라운드 서비스로 화면을 계속 캡처하기 위해 필요 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <!-- 깃허브 자동 저장 (v2.8) — 등록한 사진을 깃허브 사진 저장소에 올리고, 인터넷이 다시 연결되면 이어서 올린다 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PROJECTION" />
     <!-- 접근성 방식(확인창 없음)으로 감시할 때의 포그라운드 서비스 종류 -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />

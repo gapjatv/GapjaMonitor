@@ -8,3 +8,6 @@
 /captures
 .externalNativeBuild
 .cxx
+
+# 빌드할 때 만드는 기본 자료 지문 (v2.8)
+app/src/main/assets/asset_stamp.txt

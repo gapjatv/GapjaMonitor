@@ -3,6 +3,7 @@ package tv.gapja.monitor
 import android.content.Context
 import android.util.Log
 import java.io.File
+import kotlin.math.max
 
 /**
  * 앱에 같이 넣어 둔 기본 자료를 앱 저장소로 풀어 놓는다.
@@ -59,9 +60,19 @@ object AssetInstaller {
         return null
     }
 
+    /**
+     * 빌드할 때 만든 기본 자료 지문 (assets/asset_stamp.txt, v2.8).
+     * 깃허브 사진 저장소의 phone/ · mumu/ 사진이 바뀌면 지문이 달라져서, VERSION 을 안 올려도 새 사진을 풀어 놓는다.
+     * (Android Studio 로 직접 빌드하면 파일이 없어서 "" — 그때는 VERSION 만 본다)
+     */
+    private fun bundledStamp(ctx: Context): String = try {
+        ctx.assets.open("asset_stamp.txt").bufferedReader().use { it.readText().trim() }
+    } catch (_: Exception) { "" }
+
     fun installIfNeeded(ctx: Context): Int {
         val old = Prefs.assetsVersion(ctx)
-        if (old >= VERSION) return 0
+        val stamp = bundledStamp(ctx)
+        if (old >= VERSION && stamp == Prefs.assetsStamp(ctx)) return 0
         val firstInstall = old <= 0
         val mine = Prefs.userTemplates(ctx)
         var n = 0
@@ -88,7 +99,8 @@ object AssetInstaller {
                 }
             }
         }
-        Prefs.setAssetsVersion(ctx, VERSION)
+        Prefs.setAssetsVersion(ctx, max(old, VERSION))
+        Prefs.setAssetsStamp(ctx, stamp)
         if (n > 0) TemplateStore.generation++
         return n
     }

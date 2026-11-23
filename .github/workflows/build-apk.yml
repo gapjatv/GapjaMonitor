@@ -28,6 +28,13 @@ jobs:
           echo "sdkmanager: $SDKM"
           yes | "$SDKM" --licenses > /dev/null || true
 
+      # 깃허브 사진 저장소(gapjatv/png)의 phone/ · mumu/ 사진을 앱 기본 사진에 덮어 넣는다 (v2.8)
+      # 앱에서 등록한 사진이 자동으로 올라가는 곳이다. 가져오지 못하면 저장소에 있던 사진으로 그대로 빌드한다.
+      - name: Sync boss photos from gapjatv/png
+        env:
+          PNG_TOKEN: ${{ secrets.PNG_TOKEN }}
+        run: python3 .github/scripts/sync_png.py
+
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"

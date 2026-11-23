@@ -13,8 +13,8 @@ android {
         // 화면 캡처(MediaProjection)와 포그라운드 서비스 타입이 필요하므로 최소 29.
         minSdk = 29
         targetSdk = 35
-        versionCode = 18
-        versionName = "2.7"
+        versionCode = 19
+        versionName = "2.8"
 
         // 어떤 ABI 를 담을지는 아래 splits 에서 정한다 (기기 종류별 APK)
     }
@@ -90,4 +90,7 @@ dependencies {
     //    README 의 '② OpenCV 를 직접 넣는 방법' 을 따르세요.
     // ───────────────────────────────────────────────────────────────
     implementation("org.opencv:opencv:4.10.0")
+
+    // 깃허브 자동 저장 (v2.8) — 사진 올리기·지우기 (지우기 요청에 내용을 실어 보내야 해서 OkHttp 를 쓴다)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }
