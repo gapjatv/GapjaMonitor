@@ -85,6 +85,12 @@
             android:exported="false"
             android:label="저장된 보스 사진" />
 
+        <!-- 깃허브 자동 저장 설정 (고급 설정 맨 아래 '깃허브' 글자로만 들어온다, v2.9) -->
+        <activity
+            android:name=".GitHubActivity"
+            android:exported="false"
+            android:label="깃허브" />
+
         <!--
             태블릿(갤럭시 탭 등)에서도 쓰도록 화면 방향을 고정하지 않는다.
             화면을 돌리면 CaptureService 가 캡처 크기를 다시 맞춘다.
