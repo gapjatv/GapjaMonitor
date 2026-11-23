@@ -45,11 +45,14 @@ import kotlin.math.roundToInt
  *   • 가로 / 세로 배치를 고를 수 있다
  *   • 보스가 늘어나면 사진을 자동으로 줄여서 정해 둔 길이 안에 전부 보이게 한다
  *   • 침공 특수보스 사진만 숨기거나, 보스 사진 전체를 숨길 수 있다 (음성은 그대로)
- *   • [보스조절] 을 누르면 사진 줄을 끌어서 옮기고, 테두리의 점 8개를 끌어서 크기를 바꾼다
+ *   • [위치조절] 을 누르면 사진 줄을 끌어서 옮기고, 테두리의 점 8개를 끌어서 크기를 바꾼다
  *     (줄바꿈 없이 전체 크기만 부드럽게 바뀐다 · 모서리 점은 비율을 지키며 키운다)
  *   • [보스캡처] 를 누르면 지금 게임 화면을 찍어서 보스 사진을 잘라 등록할 수 있다
  *   • 침공에서 70R 보스가 나와 남은 후보가 4마리가 되면 그 4마리를 사진으로 잠깐 보여 준다
- *     (크기·위치는 [보스조절] 에서 자유롭게 · 가로/세로/2×2 배치가 부드럽게 바뀐다)
+ *     (크기·위치는 [위치조절] 에서 자유롭게 · 가로/세로/2×2 배치가 부드럽게 바뀐다)
+ *   • [음성만] 을 누르면 보스 사진·예상보스 4마리 사진을 숨기고 음성으로만 알린다
+ *     (누른 뒤에는 버튼이 [사진표시] 로 바뀌고, 다시 누르면 사진이 보인다)
+ *   • [위치조절] 설정 창의 '보스흐림설정' 막대로 보스 사진이 보이는 정도(10~100%)를 바꾼다
  *   • [홈앱이동] 은 메인 화면(앱)으로 돌아간다
  *
  * ⚠️ 사진 줄 터치 — 두 가지 중 고를 수 있다 (조절 메뉴 · 메인 화면)
@@ -57,7 +60,7 @@ import kotlin.math.roundToInt
  *      대신 사진이 놓인 자리는 게임 터치가 막힌다. (사진 사이 빈칸 포함, 줄 크기만큼)
  *    • 터치 통과: 사진 줄이 터치를 받지 않아(FLAG_NOT_TOUCHABLE) 사진 위를 눌러도 게임이 눌린다.
  *      Android 12부터는 덮인 창의 불투명도가 0.8 이하여야 터치가 아래로 전달되므로
- *      이때는 창 투명도를 0.8 로 둔다. 위치는 [보스조절] 에서 옮긴다.
+ *      이때는 창 투명도를 0.8 로 둔다. 위치는 [위치조절] 에서 옮긴다.
  *
  * ⚠️ '다른 앱 위에 표시' 권한이 필요하다. 없으면 조용히 아무것도 하지 않는다.
  */
@@ -427,7 +430,7 @@ class OverlayService : Service() {
         render()
     }
 
-    // ── [보스설정] 버튼 (누르면 보스캡처 · 보스조절 · 리셋 · 홈앱이동 · 종료) ─────────────
+    // ── [보스설정] 버튼 (누르면 보스캡처 · 위치조절 · 보스리셋 · 음성만 · 홈앱이동 · 종료) ─────────────
 
     private var chipMain: TextView? = null
     private var chipMenu: LinearLayout? = null
@@ -487,12 +490,15 @@ class OverlayService : Service() {
         val startBtn = menuBtn("시작", "#E616A085") { startFromOverlay() }
         val pauseBtn = menuBtn("일시정지", "#E67F8C8D") { togglePause() }
         val capBtn = menuBtn("보스캡처", "#E62980B9") { takeSnapshot() }
-        val resetBtn = menuBtn("리셋", "#E6D35400") { resetBosses() }
+        val resetBtn = menuBtn("보스리셋", "#E6D35400") { resetBosses() }
+        val voiceBtn = menuBtn("음성만", "#E6B7950B") { toggleVoiceOnly() }
         menuStart = startBtn; menuPause = pauseBtn; menuCapture = capBtn; menuReset = resetBtn
+        menuVoice = voiceBtn
         val items = listOf(
             startBtn, pauseBtn, capBtn,
-            menuBtn("보스조절", "#E616A085") { setEditing(!editing) },
+            menuBtn("위치조절", "#E616A085") { setEditing(!editing) },
             resetBtn,
+            voiceBtn,
             menuBtn("홈앱이동", "#E68E44AD") { openHome() },
             menuBtn("종료", "#E6C0392B") { exitApp() }
         )
@@ -565,11 +571,12 @@ class OverlayService : Service() {
     private var menuPause: TextView? = null
     private var menuCapture: TextView? = null
     private var menuReset: TextView? = null
+    private var menuVoice: TextView? = null
 
     /**
      * 감시 상태에 맞게 메뉴를 바꾼다.
-     *   감시 중  → 일시정지(재개) · 보스캡처 · 보스조절 · 리셋 · 홈앱이동 · 종료
-     *   멈춤     → 시작 · 보스조절 · 홈앱이동 · 종료
+     *   감시 중  → 일시정지(재개) · 보스캡처 · 위치조절 · 보스리셋 · 음성만(사진표시) · 홈앱이동 · 종료
+     *   멈춤     → 시작 · 위치조절 · 음성만(사진표시) · 홈앱이동 · 종료
      */
     private fun refreshMenu() {
         val run = Bus.running
@@ -578,6 +585,16 @@ class OverlayService : Service() {
         menuCapture?.visibility = if (run) View.VISIBLE else View.GONE
         menuReset?.visibility = if (run) View.VISIBLE else View.GONE
         menuPause?.text = if (Bus.paused) "재개" else "일시정지"
+        // [음성만] 을 누른 뒤에는 [사진표시] 로 바뀐다 (다시 누르면 사진이 보인다)
+        val vo = Prefs.voiceOnly(this)
+        menuVoice?.let { b ->
+            val t = if (vo) "사진표시" else "음성만"
+            if (b.text != t) {
+                b.text = t
+                (b.background as? GradientDrawable)?.setColor(
+                    Color.parseColor(if (vo) "#E627AE60" else "#E6B7950B"))
+            }
+        }
         chipMain?.text = when {
             !run -> "보스설정 · 멈춤"
             Bus.paused -> "보스설정 · ⏸"
@@ -611,7 +628,7 @@ class OverlayService : Service() {
         Toast.makeText(this, if (pausing) "인식을 잠시 멈췄습니다" else "인식을 다시 시작합니다", Toast.LENGTH_SHORT).show()
     }
 
-    /** 버튼 크기를 설정값에 맞춘다 (보스설정 → 보스조절 → 버튼 크기) */
+    /** 버튼 크기를 설정값에 맞춘다 (보스설정 → 위치조절 → 버튼 크기) */
     private fun applyChipScale() {
         val pct = Prefs.buttonScale(this)
         if (pct == chipScaleApplied) return
@@ -628,7 +645,20 @@ class OverlayService : Service() {
         chip?.let { v -> chipLp?.let { lp -> try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {} } }
     }
 
-    /** [리셋] 지금 판의 보스 사진을 모두 지운다 (침공 판은 순서가 기록된다) */
+    /**
+     * [음성만] / [사진표시] — 보스 사진과 예상보스 4마리 사진을 숨기거나 다시 보인다.
+     * 인식·음성 안내는 그대로 계속된다. (위치조절 중에는 크기를 맞출 수 있게 예시 사진이 보인다)
+     */
+    private fun toggleVoiceOnly() {
+        val on = !Prefs.voiceOnly(this)
+        Prefs.setVoiceOnly(this, on)
+        Toast.makeText(this,
+            if (on) "음성만 — 보스 사진을 숨기고 음성으로만 알려 줍니다" else "사진표시 — 보스 사진을 다시 보여 줍니다",
+            Toast.LENGTH_SHORT).show()
+        render()
+    }
+
+    /** [보스리셋] 지금 판의 보스 사진을 모두 지운다 (침공 판은 순서가 기록된다) */
     private fun resetBosses() {
         if (!Bus.running) {
             Toast.makeText(this, "감시 중이 아닙니다", Toast.LENGTH_SHORT).show(); return
@@ -714,12 +744,25 @@ class OverlayService : Service() {
             text = t; setTextColor(Color.WHITE); textSize = 13f
             setTypeface(typeface, Typeface.BOLD)
         }
-        box.addView(TextView(uiCtx).apply {
-            text = "🟠 보스 사진 줄: 끌면 이동 · 주황 점 8개를 끌면 크기 조절\n" +
-                   "   (모서리 점은 비율을 지키며 키우고 줄여요 · 줄바꿈 없이 크기만 바뀝니다)\n" +
-                   "🔵 남은 보스 4마리 창: 끌면 이동 · 파란 점 8개를 끌면 가로·세로를 자유롭게"
-            setTextColor(Color.parseColor("#F39C12")); textSize = 12f
-            setLineSpacing(dp(2).toFloat(), 1f)
+        // 보스흐림설정 — 보스 사진(남은 보스 4마리 포함)이 보이는 정도. 100% = 또렷하게
+        val dimLabel = label("")
+        fun syncDim() {
+            val p = Prefs.bossOpacity(this)
+            dimLabel.text = "보스흐림설정: $p%" + if (p >= 100) " (또렷하게)" else ""
+        }
+        syncDim()
+        box.addView(dimLabel)
+        box.addView(SeekBar(uiCtx).apply {
+            setMax(100 - 10)
+            setProgress(Prefs.bossOpacity(this@OverlayService) - 10)
+            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
+                    if (!u) return
+                    Prefs.setBossOpacity(this@OverlayService, p + 10); syncDim(); applyBossOpacity()
+                }
+                override fun onStartTrackingTouch(s: SeekBar?) {}
+                override fun onStopTrackingTouch(s: SeekBar?) {}
+            })
         })
 
         // 배치
@@ -1021,7 +1064,8 @@ class OverlayService : Service() {
         syncRemain()
         val v = strip ?: return
         val lp = stripLp ?: return
-        val showAll = Prefs.overlayShowAll(this)
+        // [음성만] 이면 보스 사진을 숨긴다 (위치조절 중에는 예시를 보여 준다)
+        val showAll = Prefs.overlayShowAll(this) && !Prefs.voiceOnly(this)
         val showSpecial = Prefs.showSpecial(this)
 
         // 조절 중인데 아직 보스가 없으면 크기를 맞춰볼 수 있게 예시 11장을 보여준다
@@ -1062,14 +1106,22 @@ class OverlayService : Service() {
             }
             wrapShift = newShift
         }
-        v.visibility = if (items.isEmpty() && !editing) View.GONE else View.VISIBLE
+        v.visibility = if ((items.isEmpty() || !showAll) && !editing) View.GONE else View.VISIBLE
+        applyBossOpacity()
         try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
+    }
+
+    /** 보스흐림설정 값을 보스 사진 줄과 남은 보스 4마리 창에 반영한다 */
+    private fun applyBossOpacity() {
+        val a = Prefs.bossOpacity(this) / 100f
+        strip?.let { if (it.alpha != a) it.alpha = a }
+        remain?.let { if (it.alpha != a) it.alpha = a }
     }
 
     // ── 남은 보스 4마리 (80R 예상) 창 ───────────────────────────────
     //
     // 침공에서 70R 보스가 나와 남은 후보가 4마리가 되면 CaptureService 가 Bus.remaining 에 담는다.
-    // 평소에는 터치를 통과시키고(게임을 가리지 않음), [보스조절] 중에는 예시 4마리를 보여 주며
+    // 평소에는 터치를 통과시키고(게임을 가리지 않음), [위치조절] 중에는 예시 4마리를 보여 주며
     // 끌어서 옮기고 파란 점 8개로 가로·세로 크기를 자유롭게 바꿀 수 있다.
     // 크기에 따라 사진이 가로 한 줄 → 2×2 → 세로 한 줄로 부드럽게 다시 배치된다.
 
@@ -1081,7 +1133,9 @@ class OverlayService : Service() {
 
     private fun syncRemain() {
         val real = Bus.remaining
-        val want = Prefs.remainEnabled(this) && (real.isNotEmpty() || editing)
+        // [음성만] 이면 사진은 띄우지 않는다 (음성은 CaptureService 가 그대로 읽어 준다)
+        val want = Prefs.remainEnabled(this) &&
+                ((real.isNotEmpty() && !Prefs.voiceOnly(this)) || editing)
         if (!want) { removeRemain(); return }
         val items = if (real.isNotEmpty()) real else remainSample()
         var created = false
@@ -1092,6 +1146,7 @@ class OverlayService : Service() {
             v.update(items, editing)
             applyRemainTouchMode()
         }
+        if (created) applyBossOpacity()
         if (created && editing) restack()
     }
 
@@ -1511,7 +1566,7 @@ class BossStripView(ctx: Context) : View(ctx) {
  * 네모에 가깝게 하면 2×2, 세로로 길게 하면 세로 한 줄(1×4). 사진 크기도 창에 꽉 차게 맞춘다.
  * 배치가 바뀔 때 사진이 제자리에서 새 자리로 미끄러지듯 움직인다.
  *
- * 퍼센트·글자 없이 사진만 보여 준다. [보스조절] 중에는 파란 테두리와 점 8개가 생긴다.
+ * 퍼센트·글자 없이 사진만 보여 준다. [위치조절] 중에는 파란 테두리와 점 8개가 생긴다.
  */
 class RemainView(ctx: Context) : View(ctx) {
 

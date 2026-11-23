@@ -197,6 +197,18 @@ object Prefs {
     fun setOverlayShowAll(ctx: Context, on: Boolean) =
         sp(ctx).edit().putBoolean("ov_all", on).apply()
 
+    /** [음성만] 켜면 보스 사진·예상보스 4마리 사진을 숨기고 음성으로만 알린다 (v2.6) */
+    fun voiceOnly(ctx: Context): Boolean = sp(ctx).getBoolean("ov_voice_only", false)
+
+    fun setVoiceOnly(ctx: Context, on: Boolean) =
+        sp(ctx).edit().putBoolean("ov_voice_only", on).apply()
+
+    /** 보스흐림설정 — 보스 사진이 보이는 정도 (%). 100 = 또렷하게, 낮출수록 흐리게 (v2.6) */
+    fun bossOpacity(ctx: Context): Int = sp(ctx).getInt("ov_opacity", 100).coerceIn(10, 100)
+
+    fun setBossOpacity(ctx: Context, pct: Int) =
+        sp(ctx).edit().putInt("ov_opacity", pct.coerceIn(10, 100)).apply()
+
     /** [캡처]·[조절] 버튼 묶음의 위치 (처음에는 화면 오른쪽 위) */
     fun chipX(ctx: Context, def: Int): Int = sp(ctx).getInt("chip_x", def)
     fun chipY(ctx: Context, def: Int): Int = sp(ctx).getInt("chip_y", def)

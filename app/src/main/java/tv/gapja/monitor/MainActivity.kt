@@ -480,7 +480,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(slider("사진 최대 크기", 20, 160, Prefs.overlayMaxDp(this), "dp") {
             Prefs.setOverlayMaxDp(this, it); Bus.settingsChanged()
         })
-        col.addView(body("위치·길이는 게임 화면 위의 [보스설정 → 보스조절] 로 바꿉니다. " +
+        col.addView(body("위치·길이는 게임 화면 위의 [보스설정 → 위치조절] 로 바꿉니다. " +
                 "[보스캡처] 버튼은 지금 화면에서 보스 사진을 잘라 등록합니다."))
         col.addView(btn("🔓 다른 앱 위에 표시 권한 허용", "#8E44AD") {
             if (OverlayService.canDraw(this)) toast("이미 허용되어 있습니다")
@@ -739,7 +739,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(body(
             "침공에서 70R 보스가 나와 남은 후보가 4마리가 되면, 그 4마리를 사진으로 보여 주고 " +
             "\"80라운드 예상보스는 그런트, 샤먼, 매지션, 사신이 남아 있습니다\" 처럼 읽어 줍니다. (PC판과 같은 기준) " +
-            "사진 크기·위치는 게임 위 [보스설정] → [보스조절] 에서 바꿉니다."
+            "사진 크기·위치는 게임 위 [보스설정] → [위치조절] 에서 바꿉니다."
         ))
         col.addView(check("남은 보스 4마리 화면·음성 안내", Prefs.remainEnabled(this)) {
             Prefs.setRemainEnabled(this, it)
