@@ -254,6 +254,35 @@ class MainActivity : AppCompatActivity() {
 
         // 처음 켤 때 한 번 — PC 사진을 그대로 쓸지, 폰에서 새로 등록할지 묻는다
         if (!Prefs.templateSourceAsked(this)) askTemplateSource()
+
+        // 새 버전이 있으면 알려 준다 (앱을 켤 때 한 번)
+        checkForUpdate()
+    }
+
+    /** 깃허브 릴리스에서 새 버전을 찾아 있으면 안내 창을 띄운다 */
+    private fun checkForUpdate() {
+        if (updateChecked) return
+        updateChecked = true
+        UpdateChecker.check(this) { info ->
+            if (info == null || isFinishing || isDestroyed) return@check
+            if (Prefs.skippedUpdate(this) == info.tag) return@check
+            val link = info.apkUrl ?: info.pageUrl
+            android.app.AlertDialog.Builder(this)
+                .setTitle("새 버전 ${info.tag} 이 나왔습니다")
+                .setMessage("지금 버전: v${versionName()}\n\n" +
+                        "[받기] 를 누르면 인터넷 창에서 이 기기에 맞는 앱(${UpdateChecker.variant()})이 내려받아집니다. " +
+                        "다 받으면 알림창이나 '다운로드' 폴더에서 파일을 눌러 설치해 주세요.")
+                .setPositiveButton("받기") { _, _ ->
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(link)))
+                    } catch (_: Exception) {
+                        toast("인터넷 창을 열지 못했습니다")
+                    }
+                }
+                .setNegativeButton("나중에", null)
+                .setNeutralButton("이 버전은 건너뛰기") { _, _ -> Prefs.setSkippedUpdate(this, info.tag) }
+                .show()
+        }
     }
 
     private fun versionName(): String = try {
@@ -1066,6 +1095,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 새 버전 확인은 앱을 켠 뒤 한 번만 (화면을 돌릴 때마다 다시 묻지 않게) */
+        @Volatile private var updateChecked = false
         private val BG = Color.parseColor("#FF18222C")
         private val CARD = Color.parseColor("#FF223040")
         private val ACCENT = Color.parseColor("#FF1ABC9C")

@@ -134,6 +134,41 @@ object GitHubSync {
         }
     }
 
+    /**
+     * [오인식] 신고 화면을 png 저장소의 misfire/{phone|mumu}/ 폴더에 올린다. (v3.0)
+     * 사진은 앱 기본 사진에 섞이지 않는다 (빌드 때는 phone/ · mumu/ 만 가져간다).
+     * 한 번만 시도하고, 결과는 로그에 남긴다.
+     */
+    fun uploadMisfire(ctx: Context, fileName: String, bytes: ByteArray) {
+        val app = ctx.applicationContext
+        if (!active(app)) return
+        exec.execute {
+            val token = Prefs.ghToken(app)
+            val path = "misfire/${folder()}/$fileName"
+            val url = "$API/repos/$REPO/contents/${enc(path)}"
+            val body = JSONObject().apply {
+                put("message", "🚩 오인식 신고: $fileName")
+                put("content", Base64.encodeToString(bytes, Base64.NO_WRAP))
+                put("branch", BRANCH)
+            }.toString().toRequestBody(JSON)
+            val msg = try {
+                http.newCall(req(token, url).put(body).build()).execute().use { r ->
+                    when (r.code) {
+                        200, 201 -> "☁️ [오인식 신고] 깃허브 $path 에 올렸습니다."
+                        401, 403, 404 -> "❌ [오인식 신고] 깃허브 열쇠가 맞지 않거나 올리기 권한이 없어 올리지 못했습니다. (사진첩에는 남아 있습니다)"
+                        422 -> "☁️ [오인식 신고] 같은 이름의 화면이 이미 있습니다."
+                        else -> "⚠️ [오인식 신고] 깃허브 응답 ${r.code} — 올리지 못했습니다. (사진첩에는 남아 있습니다)"
+                    }
+                }
+            } catch (e: IOException) {
+                "⚠️ [오인식 신고] 인터넷에 연결할 수 없어 올리지 못했습니다. (사진첩에는 남아 있습니다)"
+            } catch (e: Exception) {
+                "⚠️ [오인식 신고] 올리기 실패: ${e.message}"
+            }
+            Bus.log(msg)
+        }
+    }
+
     // ── 안쪽 ─────────────────────────────────────────────────────
 
     /** 인터넷이 다시 연결되면 기다리던 사진을 올린다 */

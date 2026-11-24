@@ -409,6 +409,14 @@ object Prefs {
     fun setAssetsStamp(ctx: Context, v: String) =
         sp(ctx).edit().putString("assets_stamp", v).apply()
 
+    // ── 새 버전 알림 (v3.0) ──────────────────────────────────────
+
+    /** '이 버전 건너뛰기' 를 누른 버전 이름 (예: v3.1) — 그 버전은 다시 알리지 않는다 */
+    fun skippedUpdate(ctx: Context): String = sp(ctx).getString("update_skip", "") ?: ""
+
+    fun setSkippedUpdate(ctx: Context, tag: String) =
+        sp(ctx).edit().putString("update_skip", tag).apply()
+
     // ── 깃허브 자동 저장 (v2.8) ──────────────────────────────────
 
     /** 깃허브 열쇠(토큰) — 이 기기 안에만 저장한다. 코드에는 넣지 않는다 */

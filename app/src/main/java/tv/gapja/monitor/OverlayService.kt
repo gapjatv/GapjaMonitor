@@ -200,6 +200,8 @@ class OverlayService : Service() {
         removeRemain()
         main.removeCallbacks(resizeTick); rsActive = false; rsTickPosted = false
         liveD = -1; liveLen = -1
+        fadingPreview = false
+        strip?.animate()?.cancel()
         try { strip?.let { wm?.removeView(it) } } catch (_: Exception) {}
         try { chip?.let { wm?.removeView(it) } } catch (_: Exception) {}
         strip = null; chip = null
@@ -297,10 +299,18 @@ class OverlayService : Service() {
         }
     }
 
-    /** 줄바꿈 때문에 옮겨 둔 만큼을 빼고, '첫 줄' 자리를 저장한다 */
+    /**
+     * 조절 중에는 테두리·점 자리(여백)가 평소보다 12dp 넓다 (14dp ↔ 2dp).
+     * 그래서 조절 모드를 켜고 끌 때 창을 이만큼 옮겨서, 사진이 눈에 보이는 자리는 그대로 두고
+     * 저장할 때는 평소(여백 2dp) 기준 자리로 바꿔서 저장한다. (v3.0 — 저장하면 왼쪽으로 밀리던 버그 수정)
+     */
+    private fun editPadDelta(): Int = dp(14) - dp(2)
+
+    /** 줄바꿈 때문에 옮겨 둔 만큼과 조절 모드 여백 차이를 빼고, '첫 줄' 자리를 저장한다 */
     private fun saveStripPos(lp: WindowManager.LayoutParams) {
-        if (Prefs.overlayVertical(this)) Prefs.setOverlayPos(this, lp.x + wrapShift, lp.y)
-        else Prefs.setOverlayPos(this, lp.x, lp.y + wrapShift)
+        val e = if (editing) editPadDelta() else 0
+        if (Prefs.overlayVertical(this)) Prefs.setOverlayPos(this, lp.x + wrapShift + e, lp.y + e)
+        else Prefs.setOverlayPos(this, lp.x + e, lp.y + wrapShift + e)
     }
 
     // ── 사진 줄 크기 조절 (점 8개) ─────────────────────────────────
@@ -366,11 +376,11 @@ class OverlayService : Service() {
         val (sw, sh) = screenSize()
         val vertical = Prefs.overlayVertical(this)
         val pad2 = v.padPx() * 2; val gap = v.gapPx()
-        val per = rsPer
-        val lines = (max(1, v.itemCount()) + per - 1) / per
+        // 사진 줄은 늘 한 줄 — 사진 수만큼 길게 놓아도 화면 안에 들어가는 크기까지만
+        val per = max(1, v.itemCount())
         val along = (if (vertical) sh else sw) - pad2 - (per - 1) * gap
-        val across = (if (vertical) sw else sh) - pad2 - (lines - 1) * gap
-        return min(dp(160), min(along / per, across / lines))
+        val across = (if (vertical) sw else sh) - pad2
+        return min(dp(160), min(along / per, across))
     }
 
     private fun endResize() {
@@ -492,12 +502,18 @@ class OverlayService : Service() {
         val capBtn = menuBtn("보스캡처", "#E62980B9") { takeSnapshot() }
         val resetBtn = menuBtn("보스리셋", "#E6D35400") { resetBosses() }
         val voiceBtn = menuBtn("음성만", "#E6B7950B") { toggleVoiceOnly() }
+        // [태초] ⇄ [침공] — 로비 인식이 안 됐을 때 모드를 손으로 바꾼다 (글자는 지금 모드)
+        val modeBtn = menuBtn(Bus.mode.label, "#E62E86C1") { toggleModeByHand() }
+        // [오인식] — 방금 인식된 보스가 잘못이면 지우고, 그 순간 화면을 깃허브로 보낸다
+        val misfireBtn = menuBtn("오인식", "#E68E3B5C") { reportMisfire() }
         menuStart = startBtn; menuPause = pauseBtn; menuCapture = capBtn; menuReset = resetBtn
-        menuVoice = voiceBtn
+        menuVoice = voiceBtn; menuMode = modeBtn; menuMisfire = misfireBtn
         val items = listOf(
             startBtn, pauseBtn, capBtn,
             menuBtn("위치조절", "#E616A085") { setEditing(!editing) },
             resetBtn,
+            misfireBtn,
+            modeBtn,
             voiceBtn,
             menuBtn("홈앱이동", "#E68E44AD") { openHome() },
             menuBtn("종료", "#E6C0392B") { exitApp() }
@@ -572,6 +588,8 @@ class OverlayService : Service() {
     private var menuCapture: TextView? = null
     private var menuReset: TextView? = null
     private var menuVoice: TextView? = null
+    private var menuMode: TextView? = null
+    private var menuMisfire: TextView? = null
 
     /**
      * 감시 상태에 맞게 메뉴를 바꾼다.
@@ -584,6 +602,18 @@ class OverlayService : Service() {
         menuPause?.visibility = if (run) View.VISIBLE else View.GONE
         menuCapture?.visibility = if (run) View.VISIBLE else View.GONE
         menuReset?.visibility = if (run) View.VISIBLE else View.GONE
+        menuMode?.visibility = if (run) View.VISIBLE else View.GONE
+        menuMisfire?.visibility = if (run && Bus.activated.isNotEmpty()) View.VISIBLE else View.GONE
+        // [태초] / [침공] — 지금 모드 이름이 보이고, 누르면 반대 모드로 바뀐다
+        menuMode?.let { b ->
+            val inv = Bus.mode == tv.gapja.monitor.core.GameMode.INVASION
+            val t = Bus.mode.label
+            if (b.text != t) {
+                b.text = t
+                (b.background as? GradientDrawable)?.setColor(
+                    Color.parseColor(if (inv) "#E6E67E22" else "#E62E86C1"))
+            }
+        }
         menuPause?.text = if (Bus.paused) "재개" else "일시정지"
         // [음성만] 을 누른 뒤에는 [사진표시] 로 바뀐다 (다시 누르면 사진이 보인다)
         val vo = Prefs.voiceOnly(this)
@@ -659,6 +689,22 @@ class OverlayService : Service() {
     }
 
     /** [보스리셋] 지금 판의 보스 사진을 모두 지운다 (침공 판은 순서가 기록된다) */
+    /** [태초/침공] 로비를 못 알아봤을 때 모드를 손으로 바꾼다 — 자동 인식과 똑같이 처리된다 */
+    private fun toggleModeByHand() {
+        if (!Bus.running) {
+            Toast.makeText(this, "감시 중이 아닙니다", Toast.LENGTH_SHORT).show(); return
+        }
+        CaptureService.send(this, CaptureService.ACTION_TOGGLE_MODE)
+    }
+
+    /** [오인식] 방금 인식된 보스를 지우고 그 순간 화면을 깃허브(png 저장소 misfire 폴더)로 보낸다 */
+    private fun reportMisfire() {
+        if (!Bus.running) {
+            Toast.makeText(this, "감시 중이 아닙니다", Toast.LENGTH_SHORT).show(); return
+        }
+        CaptureService.send(this, CaptureService.ACTION_MISFIRE)
+    }
+
     private fun resetBosses() {
         if (!Bus.running) {
             Toast.makeText(this, "감시 중이 아닙니다", Toast.LENGTH_SHORT).show(); return
@@ -717,18 +763,48 @@ class OverlayService : Service() {
         try { wm?.updateViewLayout(strip, lp) } catch (_: Exception) {}
     }
 
+    /** 위치조절을 끝낼 때 예시 사진이 천천히 흐려지며 사라지는 중인지 (v3.0) */
+    private var fadingPreview = false
+
     private fun setEditing(on: Boolean) {
+        if (editing == on) return
+        // 여백이 바뀌어도 사진이 눈에 보이는 자리는 그대로 두도록 창을 옮긴다 (저장 위치 어긋남 방지)
+        stripLp?.let { lp ->
+            val d = editPadDelta()
+            if (on) { lp.x -= d; lp.y -= d } else { lp.x += d; lp.y += d }
+        }
+        // 인식된 보스가 없을 때만(= 예시 사진만 보일 때) 완료하면 2초 동안 흐려지며 사라진다.
+        // 이미 인식된 보스가 있으면 예시는 바로 걷고 인식된 보스를 곧바로 보여 준다.
+        val previewOnly = Bus.activated.isEmpty()
         editing = on
+        cancelPreviewFade()
         applyStripTouchMode()
         if (on) showPanel() else hidePanel()
+        if (!on && previewOnly && strip != null) startPreviewFade()
         render()
+    }
+
+    private fun startPreviewFade() {
+        val v = strip ?: return
+        fadingPreview = true
+        v.animate().cancel()
+        v.alpha = Prefs.bossOpacity(this) / 100f
+        v.animate().alpha(0f).setDuration(PREVIEW_FADE_MS).withEndAction {
+            if (fadingPreview) { fadingPreview = false; render() }
+        }.start()
+    }
+
+    private fun cancelPreviewFade() {
+        if (!fadingPreview) return
+        fadingPreview = false
+        strip?.animate()?.cancel()
     }
 
     private fun showPanel() {
         if (panel != null) return
         val box = LinearLayout(uiCtx).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(12), dp(14), dp(12))
+            setPadding(dp(10), dp(7), dp(10), dp(7))
         }
         // 화면이 작으면 위아래로 밀어서 볼 수 있게 (칸이 많아져도 '완료' 버튼이 화면 밖으로 나가지 않는다)
         val scroll = ScrollView(uiCtx).apply {
@@ -741,7 +817,7 @@ class OverlayService : Service() {
             addView(box)
         }
         fun label(t: String) = TextView(uiCtx).apply {
-            text = t; setTextColor(Color.WHITE); textSize = 13f
+            text = t; setTextColor(Color.WHITE); textSize = 12f
             setTypeface(typeface, Typeface.BOLD)
         }
         // 보스흐림설정 — 보스 사진(남은 보스 4마리 포함)이 보이는 정도. 100% = 또렷하게
@@ -753,6 +829,7 @@ class OverlayService : Service() {
         syncDim()
         box.addView(dimLabel)
         box.addView(SeekBar(uiCtx).apply {
+            setPadding(dp(10), dp(3), dp(10), dp(3))
             setMax(100 - 10)
             setProgress(Prefs.bossOpacity(this@OverlayService) - 10)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -775,13 +852,14 @@ class OverlayService : Service() {
             hBtn.setBackgroundColor(Color.parseColor(if (!vert) "#1ABC9C" else "#3C4B5A"))
         }
         for ((b, t, vert) in listOf(Triple(hBtn, "가로", false), Triple(vBtn, "세로", true))) {
-            b.text = t; b.setTextColor(Color.WHITE); b.isAllCaps = false; b.textSize = 13f
+            b.text = t; b.setTextColor(Color.WHITE); b.isAllCaps = false; b.textSize = 12f
+            b.minHeight = 0; b.minimumHeight = 0; b.setPadding(0, 0, 0, 0)
             b.setOnClickListener {
                 Prefs.setOverlayVertical(this, vert)
                 Prefs.setOverlayLengthDp(this, 0)   // 방향이 바뀌면 길이는 화면 끝까지로 되돌린다
                 syncLayoutBtns(); render()
             }
-            row.addView(b, LinearLayout.LayoutParams(0, dp(40), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) })
+            row.addView(b, LinearLayout.LayoutParams(0, dp(32), 1f).also { it.setMargins(dp(3), 0, dp(3), 0) })
         }
         syncLayoutBtns()
         box.addView(row)
@@ -792,20 +870,27 @@ class OverlayService : Service() {
         syncSize()
         box.addView(sizeLabel)
         box.addView(SeekBar(uiCtx).apply {
+            setPadding(dp(10), dp(3), dp(10), dp(3))
             setMax(160 - 20)
             setProgress(Prefs.overlayMaxDp(this@OverlayService) - 20)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, u: Boolean) {
                     if (!u) return
-                    val dd = dp(p + 20)
-                    // 한 줄에 놓인 사진 수가 그대로이도록 줄 길이도 같이 맞춘다 (둘째 줄로 밀리지 않게)
+                    // 한 줄이 화면 밖으로 나가지 않는 크기까지만 키운다
+                    val fit = strip?.let { sv -> max(dp(20), maxStripD(sv)) } ?: dp(160)
+                    val dens = resources.displayMetrics.density
+                    val wantDp = p + 20
+                    val useDp = if (dp(wantDp) > fit) max(20, (fit / dens).toInt()) else wantDp
+                    if (useDp != wantDp) s?.progress = useDp - 20
+                    val dd = dp(useDp)
+                    // 한 줄에 놓인 사진 수가 그대로이도록 줄 길이도 같이 맞춘다
                     strip?.let { sv ->
                         val per = sv.linesPerRow()
                         val len = per * dd + (per - 1) * sv.gapPx()
                         Prefs.setOverlayLengthDp(this@OverlayService,
-                            kotlin.math.ceil(len / resources.displayMetrics.density).toInt() + 1)
+                            kotlin.math.ceil(len / dens).toInt() + 1)
                     }
-                    Prefs.setOverlayMaxDp(this@OverlayService, p + 20); syncSize(); render()
+                    Prefs.setOverlayMaxDp(this@OverlayService, useDp); syncSize(); render()
                 }
                 override fun onStartTrackingTouch(s: SeekBar?) {}
                 override fun onStopTrackingTouch(s: SeekBar?) {}
@@ -813,7 +898,8 @@ class OverlayService : Service() {
         })
 
         fun check(t: String, get: () -> Boolean, set: (Boolean) -> Unit) = CheckBox(uiCtx).apply {
-            text = t; setTextColor(Color.WHITE); textSize = 13f
+            text = t; setTextColor(Color.WHITE); textSize = 12f
+            minHeight = 0; minimumHeight = 0; setPadding(dp(2), 0, 0, 0)
             isChecked = get()
             setOnCheckedChangeListener { _, v -> set(v); render() }
         }
@@ -833,6 +919,7 @@ class OverlayService : Service() {
         syncBtn()
         box.addView(btnLabel)
         box.addView(SeekBar(uiCtx).apply {
+            setPadding(dp(10), dp(3), dp(10), dp(3))
             setMax(200 - 60)
             setProgress(Prefs.buttonScale(this@OverlayService) - 60)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -847,14 +934,16 @@ class OverlayService : Service() {
 
         val done = Button(uiCtx).apply {
             text = "완료 (저장)"; setTextColor(Color.WHITE); isAllCaps = false
+            minHeight = 0; minimumHeight = 0; setPadding(0, 0, 0, 0)
             setBackgroundColor(Color.parseColor("#16A085"))
             setOnClickListener { setEditing(false) }
         }
-        box.addView(done, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(44)).also { it.topMargin = dp(6) })
+        box.addView(done, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(36)).also { it.topMargin = dp(4) })
 
         val (sw, sh) = screenSize()
+        // 폰에서는 세로 사진 줄이 오른쪽에 붙어 있으니, 설정 창은 왼쪽에 두고 오른쪽을 40dp 비운다
         panelLp = WindowManager.LayoutParams(
-            min(sw - dp(24), dp(360)),
+            min(sw - dp(8) - dp(40), dp(310)),
             WindowManager.LayoutParams.WRAP_CONTENT,
             overlayType(),
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
@@ -862,8 +951,9 @@ class OverlayService : Service() {
         ).apply {
             // 보스 사진 줄이 화면 아래쪽에 있으면 설정 창은 위에, 위쪽에 있으면 아래에 띄운다
             val stripMid = (stripLp?.y ?: 0) + (strip?.height ?: 0) / 2
-            gravity = (if (stripMid > sh / 2) Gravity.TOP else Gravity.BOTTOM) or Gravity.CENTER_HORIZONTAL
-            y = dp(24)
+            gravity = (if (stripMid > sh / 2) Gravity.TOP else Gravity.BOTTOM) or Gravity.START
+            x = dp(8)
+            y = dp(16)
         }
         panel = scroll
         try { wm?.addView(scroll, panelLp) } catch (_: Exception) { panel = null }
@@ -1068,8 +1158,11 @@ class OverlayService : Service() {
         val showAll = Prefs.overlayShowAll(this) && !Prefs.voiceOnly(this)
         val showSpecial = Prefs.showSpecial(this)
 
-        // 조절 중인데 아직 보스가 없으면 크기를 맞춰볼 수 있게 예시 11장을 보여준다
-        val src = if (editing && Bus.activated.isEmpty()) PREVIEW else Bus.activated
+        // 흐려지는 중에 보스가 인식되면 예시는 바로 걷는다
+        if (fadingPreview && Bus.activated.isNotEmpty()) cancelPreviewFade()
+        // 위치조절 중에는 인식된 보스 수와 상관없이 전체 예시 11장을 보여 준다 (보스 수는 완료하면 그대로 돌아온다)
+        val showPreview = editing || fadingPreview
+        val src = if (showPreview) PREVIEW else Bus.activated
 
         val items = ArrayList<BossStripView.Item>()
         for (b in src) {
@@ -1090,13 +1183,13 @@ class OverlayService : Service() {
         val anchor = if (vertical) lp.x + wrapShift else lp.y + wrapShift
         val reverse = if (vertical) anchor + maxD / 2 > sw / 2 else anchor + maxD / 2 > sh / 2
         v.update(
-            items = if (showAll || editing) items else emptyList(),
+            items = if (showAll || showPreview) items else emptyList(),
             vertical = vertical,
             maxD = maxD,
             lengthPx = max(dp(60), avail),
             shrink = Prefs.autoShrink(this),
             editing = editing,
-            highlightLast = !editing && Bus.activated.isNotEmpty(),
+            highlightLast = !showPreview && Bus.activated.isNotEmpty(),
             reverseLines = reverse
         )
         val newShift = if (reverse) v.extraAcross() else 0
@@ -1106,7 +1199,7 @@ class OverlayService : Service() {
             }
             wrapShift = newShift
         }
-        v.visibility = if ((items.isEmpty() || !showAll) && !editing) View.GONE else View.VISIBLE
+        v.visibility = if ((items.isEmpty() || !showAll) && !showPreview) View.GONE else View.VISIBLE
         applyBossOpacity()
         try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
     }
@@ -1114,7 +1207,8 @@ class OverlayService : Service() {
     /** 보스흐림설정 값을 보스 사진 줄과 남은 보스 4마리 창에 반영한다 */
     private fun applyBossOpacity() {
         val a = Prefs.bossOpacity(this) / 100f
-        strip?.let { if (it.alpha != a) it.alpha = a }
+        // 흐려지는 중에는 애니메이션이 투명도를 맡는다
+        if (!fadingPreview) strip?.let { if (it.alpha != a) it.alpha = a }
         remain?.let { if (it.alpha != a) it.alpha = a }
     }
 
@@ -1342,6 +1436,9 @@ class OverlayService : Service() {
         /** 화면에 그리는 크기가 목표 크기로 다가가는 비율(프레임당) — 작을수록 부드럽지만 느리다 */
         private const val RESIZE_EASE = 0.30f
 
+        /** 위치조절 완료 후 예시 사진이 사라지는 데 걸리는 시간 */
+        private const val PREVIEW_FADE_MS = 2000L
+
         /** 조절 화면에서 크기를 맞춰볼 때 쓰는 예시 (판 끝까지 간 경우 11장) */
         private val PREVIEW = listOf(
             "그런트", "윔", "거대 전기로봇", "닥터", "샤먼", "악마 모노폴리",
@@ -1418,14 +1515,10 @@ class BossStripView(ctx: Context) : View(ctx) {
     }
 
     /**
-     * 한 줄에 놓을 사진 수.
-     * 자동 축소가 꺼져 있으면 크기를 줄이지 않고, 줄 길이를 넘는 사진은 다음 줄로 보낸다.
+     * 한 줄에 놓을 사진 수 — 이제는 늘 전부(한 줄). 줄바꿈 없이, 고른 배치(가로/세로) 방향으로만 늘어선다.
+     * 자동 축소가 켜져 있으면 줄 길이에 맞춰 사진을 줄이고, 꺼져 있으면 설정한 크기 그대로 둔다.
      */
-    private fun perLine(): Int {
-        val n = max(1, items.size)
-        if (shrink) return n
-        return ((lengthPx + gap) / (d + gap)).coerceIn(1, n)
-    }
+    private fun perLine(): Int = max(1, items.size)   // v3.0 — 늘 한 줄(가로면 가로 한 줄, 세로면 세로 한 줄)
 
     private fun lineCount(): Int {
         val n = max(1, items.size); val per = perLine()
