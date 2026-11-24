@@ -901,26 +901,22 @@ class CaptureService : Service() {
     }
 
     /**
-     * [태초/침공] 모드를 손으로 바꾼다.
-     * 로비 화면을 못 알아봤을 때를 위한 것으로, 자동 인식(로비 → 모드 전환)과 똑같이
-     * 모드·알림을 바꾸고, 보스 사진이 있으면 초기화한다.
+     * [태초/침공] 모드를 손으로 바꾼다. (v3.1 — 보스 사진은 초기화하지 않고 모드만 바꾼다)
+     * 로비 화면을 못 알아봤을 때를 위한 것으로, 자동 인식(로비 → 모드 전환)과 같이
+     * 모드·알림·감시 대상(태초/침공 보스 목록)을 바꾼다.
      */
     private fun toggleModeByHand() {
         val old = session.mode
         val newMode = if (old == GameMode.NORMAL) GameMode.INVASION else GameMode.NORMAL
-        val hadBosses = session.activationOrder.isNotEmpty()
         session.mode = newMode
         streak.clear()
         Prefs.setMode(this, newMode.key)
         Bus.mode = newMode
         updateNotification("감시 중 · ${newMode.label} (${PcDefaults.speedLabel(newMode, Prefs.speedLock(this))})")
-        Bus.log("🔁 [수동 전환] ${old.label}모드 > ${newMode.label}모드로 바꿨습니다." +
-                if (hadBosses) " 보스 사진을 초기화합니다. (보스 ${session.activationOrder.size}마리였음)" else "")
+        Bus.log("🔁 [수동 전환] ${old.label}모드 > ${newMode.label}모드로 바꿨습니다. (보스 사진은 그대로)")
         Bus.notice((if (newMode == GameMode.INVASION) "🔥 " else "🟢 ") +
-                "${old.label}모드 > ${newMode.label}모드 전환" + if (hadBosses) "\n보스 사진 초기화" else "")
-        if (hadBosses) endGame() else Bus.onState(session, seq)
-        // 자동 전환과 같이, 바뀐 직후 잠깐은 보스를 찾지 않는다
-        lobbyQuietUntil = System.currentTimeMillis() + LOBBY_QUIET_MS
+                "${old.label}모드 > ${newMode.label}모드 전환")
+        Bus.onState(session, seq)
     }
 
     /**
