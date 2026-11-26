@@ -250,6 +250,7 @@ class CaptureService : Service() {
         markStarted(mode)
         Bus.log("▶ 감시를 시작했습니다. (화면 공유 · ${w}×${h}, 축소 ${(downscale * 100).toInt()}%, " +
                 "${intervalMs}ms 간격, 템플릿 ${templates.count()}장)")
+        Bus.log("📐 [감시 구역] ${WatchZones.summary(this)}  (✘ 는 전체 화면에서 찾습니다)")
         handlerOn().post(loop)
     }
 
@@ -320,6 +321,7 @@ class CaptureService : Service() {
         a11yGapMs = max(A11Y_MIN_GAP_MS, intervalMs)
         markStarted(mode)
         Bus.log("▶ 감시를 시작했습니다. (접근성 · 확인창 없음, 약 ${a11yGapMs}ms 간격, 템플릿 ${templates.count()}장)")
+        Bus.log("📐 [감시 구역] ${WatchZones.summary(this)}  (✘ 는 전체 화면에서 찾습니다)")
         handlerOn().post(a11yLoop)
     }
 
@@ -534,16 +536,21 @@ class CaptureService : Service() {
      * 화면 공유 방식과 접근성 방식이 같은 분석을 쓴다. 끝나면 scr 을 풀어 준다.
      */
     private fun analyze(scr: Mat) {
+        // v3.5: 감시 구역 — 이번 한 장에서 잘라 쓴 부분 화면들 (끝나면 모두 돌려준다)
+        val made = ArrayList<Mat>()
         try {
             val now = System.currentTimeMillis()
 
             // 자르기 화면이 떠 있는 동안은 쉰다 (그 화면 속 게임 사진을 진짜 게임으로 착각하지 않게)
             if (Bus.cropVisible) return
 
+            // 로비·배속은 '로비·배속 구역' 안에서만 찾는다 (등록 안 했으면 전체 화면)
+            val lobbyRg = zoneMats(scr, listOf(WatchZones.LOBBY)).also { made.addAll(it) }
+
             // ① 로비 화면 — 인식되면 모드를 맞추고 보스 사진을 초기화한다
             if (now >= lobbyNextCheck) {
                 lobbyNextCheck = now + LOBBY_CHECK_MS
-                if (checkLobby(scr, now)) {
+                if (checkLobby(scr, now, lobbyRg)) {
                     if (!inLobby) Bus.lobby = true
                     inLobby = true; lobbyLastSeen = now
                     return
@@ -559,22 +566,66 @@ class CaptureService : Service() {
             // ② 배속 — 배속 고정을 끈 경우만 화면에서 1배속/2배속을 읽는다
             if (!Prefs.speedLock(this) && now >= speedNextCheck) {
                 speedNextCheck = now + SPEED_CHECK_MS
-                checkSpeed(scr)
+                checkSpeed(scr, lobbyRg)
             }
 
-            // ③ 보스
+            // ③ 보스 — 그 모드의 보스 구역(태초 1곳 / 침공 2곳) 안에서만 찾는다 (등록 안 했으면 전체 화면)
+            val bossRg = zoneMats(scr, WatchZones.bossZones(session.mode)).also { made.addAll(it) }
             for (name in BossCatalog.watchList(session.mode)) {
                 if (!running) break
                 if (!session.shouldWatch(name, now)) continue
                 val tpl = templates.forBoss(name, session.mode) ?: continue
-                if (detect(name, scr, tpl, now)) {
+                if (detect(name, scr, tpl, now, bossRg)) {
                     // 한 바퀴에 여러 마리가 동시에 켜지면 안내가 겹치므로 하나만 처리한다
                     break
                 }
             }
         } finally {
+            for (m in made) { try { m.release() } catch (_: Exception) {} }
             scr.release()
         }
+    }
+
+    // ── 감시 구역 (v3.5) ──────────────────────────────────────────
+
+    /** 등록된 구역만 화면에서 잘라 낸다. 하나도 없으면 빈 목록 → 호출한 쪽이 전체 화면을 쓴다 */
+    private fun zoneMats(scr: Mat, zones: List<String>): List<Mat> {
+        val out = ArrayList<Mat>()
+        for (z in zones) {
+            val r = WatchZones.rect(this, z, scr.cols(), scr.rows()) ?: continue
+            try { out.add(scr.submat(r)) } catch (_: Exception) {}
+        }
+        return out
+    }
+
+    /** 구역 하나에서 찾은 결과 — 어느 구역이었는지 같이 기억한다 (윤곽선 검사가 같은 구역을 써야 해서) */
+    private class ZoneHit(val out: MatchOutcome, val rg: Mat)
+
+    private val zoneWarned = HashSet<String>()
+
+    /** 사진이 들어가는 구역만 고른다. 구역이 없거나 사진이 구역보다 크면 전체 화면 */
+    private fun fitting(rg: List<Mat>, scr: Mat, tpl: Mat): List<Mat> {
+        if (rg.isEmpty()) return listOf(scr)
+        val w = tpl.cols() * downscale
+        val h = tpl.rows() * downscale
+        val ok = rg.filter { it.cols() >= w && it.rows() >= h }
+        if (ok.isNotEmpty()) return ok
+        val k = "${tpl.cols()}x${tpl.rows()}"
+        if (zoneWarned.add(k)) {
+            Bus.log("⚠️ [감시 구역] 지정한 구역이 사진(${tpl.cols()}×${tpl.rows()})보다 작아서 이 사진은 " +
+                    "전체 화면에서 찾습니다. 구역을 조금 더 크게 잡아 주세요.")
+        }
+        return listOf(scr)
+    }
+
+    /** 구역들에서 각각 찾아 가장 높은 점수를 돌려준다 */
+    private fun searchIn(rg: List<Mat>, scr: Mat, tpl: Mat, find: (Mat) -> MatchOutcome): ZoneHit {
+        var best: ZoneHit? = null
+        for (m in fitting(rg, scr, tpl)) {
+            val o = find(m)
+            if (best == null || o.score > best.out.score) best = ZoneHit(o, m)
+        }
+        return best ?: ZoneHit(MatchOutcome.NONE, scr)
     }
 
     /**
@@ -598,7 +649,7 @@ class CaptureService : Service() {
     /** 로비 사진 한 종류의 최고 점수 (기준을 넘은 사진만, 없으면 null) */
     private data class LobbyHit(val lobby: String, val mode: GameMode?, val score: Double, val file: String)
 
-    private fun scoreLobby(scr: Mat, lobby: String, lobbyMode: GameMode?): LobbyHit? {
+    private fun scoreLobby(scr: Mat, lobby: String, lobbyMode: GameMode?, rg: List<Mat>): LobbyHit? {
         var hit: LobbyHit? = null
         for (fn in templates.lobbyShots(lobby)) {
             // 내 사진은 '새로 등록/기본 사진' 설정과 상관없이 항상 쓴다
@@ -606,9 +657,10 @@ class CaptureService : Service() {
             // 이 기기에서 찍은 로비 사진은 높은 기준, PC 사진은 기준값 + 윤곽선 검사
             val phone = templates.isPhoneShot(fn)
             val th = if (phone) PcDefaults.LOBBY_THRESHOLD_PHONE else PcDefaults.LOBBY_THRESHOLD
-            val r = matcher.multiScale(scr, t, th, downscale = downscale)
+            val zh = searchIn(rg, scr, t) { matcher.multiScale(it, t, th, downscale = downscale) }
+            val r = zh.out
             if (r.score < th) continue
-            if (!phone && matcher.verifyEdge(scr, t, r.x, r.y, r.w, r.h) < PcDefaults.LOBBY_MIN_EDGE) continue
+            if (!phone && matcher.verifyEdge(zh.rg, t, r.x, r.y, r.w, r.h) < PcDefaults.LOBBY_MIN_EDGE) continue
             // 첫 번째로 넘은 사진에서 멈추지 않고, 그 로비 사진들 중 가장 높은 점수를 쓴다
             if (hit == null || r.score > hit.score) hit = LobbyHit(lobby, lobbyMode, r.score, fn)
         }
@@ -657,7 +709,7 @@ class CaptureService : Service() {
     private var lastNoticeLobby: String? = null
     private var lastNoticeAt = 0L
 
-    private fun checkLobby(scr: Mat, now: Long): Boolean {
+    private fun checkLobby(scr: Mat, now: Long, rg: List<Mat>): Boolean {
         // ── v2.0: 로비 3종을 모두 재고, 가장 높은 것을 고른다 ──
         // 예전에는 태초로비 → 침공로비 순서로 '먼저 기준을 넘은 것' 을 골랐다.
         // 핸드폰 태초로비와 침공로비 화면은 배치가 똑같고 색만 달라서(인식은 회색조)
@@ -665,9 +717,9 @@ class CaptureService : Service() {
         // 그래서 침공로비에서 화면이 조금씩 움직일 때마다 태초/침공이 번갈아 골라져
         // "태초모드 > 침공모드 전환" 이 계속 반복됐다.
         val hits = listOfNotNull(
-            scoreLobby(scr, PcDefaults.LOBBY_NORMAL, GameMode.NORMAL),
-            scoreLobby(scr, PcDefaults.LOBBY_INVASION, GameMode.INVASION),
-            scoreLobby(scr, PcDefaults.LOBBY_COMMON, null)
+            scoreLobby(scr, PcDefaults.LOBBY_NORMAL, GameMode.NORMAL, rg),
+            scoreLobby(scr, PcDefaults.LOBBY_INVASION, GameMode.INVASION, rg),
+            scoreLobby(scr, PcDefaults.LOBBY_COMMON, null, rg)
         )
         val top = hits.maxByOrNull { it.score }
         if (top != null) {
@@ -776,15 +828,15 @@ class CaptureService : Service() {
     }
 
     /** 1배속/2배속 표시를 읽는다 (PC monitor 의 배속 인식과 같은 판정) */
-    private fun checkSpeed(scr: Mat) {
+    private fun checkSpeed(scr: Mat, rg: List<Mat>) {
         val inv = session.mode == GameMode.INVASION
         fun pick(n: String): String =
             if (inv && templates.get("침공_$n.png") != null) "침공_$n.png" else "$n.png"
         val t2 = templates.get(pick("2배속상태"))
         val t1 = templates.get(pick("1배속상태"))
         val th = PcDefaults.SPEED_THRESHOLD
-        val s2 = t2?.let { matcher.multiScale(scr, it, th, downscale = downscale).score } ?: 0.0
-        val s1 = t1?.let { matcher.multiScale(scr, it, th, downscale = downscale).score } ?: 0.0
+        val s2 = t2?.let { t -> searchIn(rg, scr, t) { matcher.multiScale(it, t, th, downscale = downscale) }.out.score } ?: 0.0
+        val s1 = t1?.let { t -> searchIn(rg, scr, t) { matcher.multiScale(it, t, th, downscale = downscale) }.out.score } ?: 0.0
         val newSpeed = when {
             s2 >= th && s1 >= th -> when {
                 s2 - s1 >= PcDefaults.SPEED_MARGIN -> 2
@@ -813,7 +865,7 @@ class CaptureService : Service() {
      *
      * @return 활성화되었으면 true
      */
-    private fun detect(name: String, scr: Mat, tpl: Mat, now: Long): Boolean {
+    private fun detect(name: String, scr: Mat, tpl: Mat, now: Long, rg: List<Mat>): Boolean {
         // PC 사진을 쓸 때는 PC판 기준값(대부분 60%)을,
         // 폰에서 새로 등록한 사진만 쓸 때는 폰판 기준값(72%)을 쓴다.
         // 폰 사진은 크기가 정확히 맞아서 높은 기준으로도 잘 잡히고, 엉뚱한 곳(로비 그림 등)에 덜 걸린다.
@@ -832,15 +884,18 @@ class CaptureService : Service() {
         // 발열 줄이기: 이 기기에서 직접 등록한 사진은 크기가 거의 같으므로 크기 비교를 3단계만 한다
         val scales = if (Prefs.powerSave(this) && templates.bossFileIsUser(name, session.mode))
             NARROW_SCALES else BossCatalog.SCALES
-        var out = matcher.multiScale(scr, tpl, th, scales = scales, downscale = downscale)
+        // v3.5: 감시 구역이 있으면 그 안에서만 찾는다 (rgn = 가장 잘 맞은 구역 — 윤곽선·조각 검사도 그 구역에서)
+        val first = searchIn(rg, scr, tpl) { matcher.multiScale(it, tpl, th, scales = scales, downscale = downscale) }
+        var out = first.out
+        var rgn = first.rg
         var ok = out.score >= th
         var tileEdge = -1.0
 
         val inBand = !ok && out.score >= th - BossCatalog.RESCUE_BAND
         if (inBand) {
             // ② 보충 크기
-            val r = matcher.rescueScales(scr, tpl, th, downscale)
-            if (r.score > out.score) out = r
+            val rz = searchIn(rg, scr, tpl) { matcher.rescueScales(it, tpl, th, downscale) }
+            if (rz.out.score > out.score) { out = rz.out; rgn = rz.rg }
             ok = out.score >= th
             if (ok) Bus.log("🔎 [구제 인식] $name — 보충 크기 검사로 찾았습니다. " +
                     "(정확도 ${pct(out.score)})")
@@ -856,8 +911,8 @@ class CaptureService : Service() {
                 if (!phone && !inBand) continue
                 val ex = templates.get(fn) ?: continue
                 val sc = if (phone && Prefs.powerSave(this)) NARROW_SCALES else BossCatalog.SCALES
-                val e = matcher.multiScale(scr, ex, th, scales = sc, downscale = downscale)
-                if (e.score > out.score) out = e
+                val ez = searchIn(rg, scr, ex) { matcher.multiScale(it, ex, th, scales = sc, downscale = downscale) }
+                if (ez.out.score > out.score) { out = ez.out; rgn = ez.rg }
                 if (out.score >= th) {
                     ok = true
                     Bus.log("🖼 [보조 사진 인식] $name — '${fn.removeSuffix(".png")}' 로 찾았습니다. " +
@@ -871,11 +926,11 @@ class CaptureService : Service() {
             // ④ 타일 분할 투표 (마지막 수단, 쿨다운으로 비용 상한)
             if (!ok && Prefs.tileMinAgree(this) > 0 && session.canTileVote(name, now)) {
                 session.markTileVote(name, now)
-                val tv = matcher.tileVote(scr, tpl, scale = out.scale, downscale = downscale)
+                val tv = matcher.tileVote(rgn, tpl, scale = out.scale, downscale = downscale)
                 if (tv.agree >= Prefs.tileMinAgree(this) && tv.score >= Prefs.tileMinScore(this)) {
                     // 타일구제는 깐깐 검사 대상이 아니어도 윤곽선 검증을 통과해야 한다
                     val need = max(BossCatalog.MIN_EDGE_SCORE, BossCatalog.TILE_RESCUE_MIN_EDGE)
-                    val ev = matcher.verifyEdge(scr, tpl, tv.x, tv.y, tv.w, tv.h)
+                    val ev = matcher.verifyEdge(rgn, tpl, tv.x, tv.y, tv.w, tv.h)
                     if (ev >= need) {
                         Bus.log("🧩 [가려짐 구제] $name — 네임텍 등으로 일부가 가려진 것 같습니다. " +
                                 "조각 검사로 찾았습니다. (기본 ${pct(out.score)} → " +
@@ -900,7 +955,7 @@ class CaptureService : Service() {
         if (strict || guard) {
             if (strict && out.psr < BossCatalog.MIN_PSR) { streak.remove(name); return false }
             if (tileEdge < 0) {
-                val ev = matcher.verifyEdge(scr, tpl, out.x, out.y, out.w, out.h)
+                val ev = matcher.verifyEdge(rgn, tpl, out.x, out.y, out.w, out.h)
                 val need = if (guard) max(BossCatalog.MIN_EDGE_SCORE, BossCatalog.PHONE_GUARD_MIN_EDGE)
                            else BossCatalog.MIN_EDGE_SCORE
                 if (ev < need) {

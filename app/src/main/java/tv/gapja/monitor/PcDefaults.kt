@@ -13,7 +13,7 @@ object PcDefaults {
     /** PC boss_match_thresholds — 모든 모드 공통 매칭 기준(%) */
     private val THRESHOLDS: Map<String, Int> = mapOf(
         "고기슬라임" to 65, "그런트" to 60, "윔" to 60, "콜디스트" to 60,
-        "보호막로봇" to 60, "양술사" to 60, "닥터" to 60, "샤먼" to 60,
+        "보호막로봇" to 60, "양술사" to 70, "닥터" to 60, "샤먼" to 60,
         "매지션" to 60, "사신" to 60, "반파이어" to 60, "나하투" to 60,
         "블랑카" to 60, "히든보스" to 60, "쿨타임" to 60,
         "거대 전기로봇" to 55, "쌍둥이 슬라임" to 60, "악마 모노폴리" to 60
@@ -21,7 +21,7 @@ object PcDefaults {
 
     /** PC boss_match_thresholds_invasion — 침공 모드에서만 덮어쓰는 값(%) */
     private val THRESHOLDS_INVASION: Map<String, Int> = mapOf(
-        "양술사" to 52, "거대 전기로봇" to 58
+        "양술사" to 70, "거대 전기로봇" to 58
     )
 
     /** 그 모드에서 쓸 기본 기준값 (사용자 보정값이 있으면 그걸로 덮어쓴다) */

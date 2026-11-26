@@ -192,7 +192,9 @@ class CropActivity : AppCompatActivity() {
             text = "보스(로비)를 고르고 [등록] 을 누르세요. 보스마다 기본 1장 + 보조 1장까지 등록되고, " +
                     "더 등록하면 보조 사진이 새 사진으로 바뀝니다. (기본 사진은 그대로)\n" +
                     "• 공통로비1·2·3: 판이 끝난 '종료!' 화면 등 3가지 — 칸마다 따로 등록합니다.\n" +
-                    "• 1배속상태·2배속상태: 화면의 배속 표시(자동 인식용) — '배속 자동 인식' 을 켰을 때만 쓰입니다. 태초/침공을 따로 등록하세요."
+                    "• 1배속상태·2배속상태: 화면의 배속 표시(자동 인식용) — '배속 자동 인식' 을 켰을 때만 쓰입니다. 태초/침공을 따로 등록하세요.\n" +
+                    "• 📐 감시 구역(맨 아래): 사진이 아니라 '찾을 자리'를 등록합니다. 보스가 나오는 자리를 보스 그림보다 넉넉하게 감싸 주세요. " +
+                    "태초는 1곳, 침공은 2곳(구역1·2)입니다. 등록하지 않은 구역은 전체 화면에서 찾습니다."
             setPadding(0, dp(6), 0, 0)
         }
         col.addView(saveInfo)
@@ -219,6 +221,7 @@ class CropActivity : AppCompatActivity() {
 
     private fun boxKey(target: String?): String {
         val kind = when {
+            WatchZones.isZone(target) -> "zone_" + WatchZones.key(target!!)
             target != null && PcDefaults.isLobby(target) -> "lobby"
             target != null && PcDefaults.isSpeedShot(target) -> "speed"
             else -> "boss"
@@ -233,6 +236,16 @@ class CropActivity : AppCompatActivity() {
         val key = boxKey(bossSpinner.selectedItem as? String)
         if (key == boxKind) return
         boxKind = key
+        val target = bossSpinner.selectedItem as? String
+        if (WatchZones.isZone(target)) {
+            // 등록해 둔 구역이 있으면 그 자리, 없으면 화면 가운데쯤에서 시작
+            val z = Prefs.zone(this, WatchZones.key(target!!))
+            val src = source
+            val land = src != null && src.width > src.height
+            if (z != null && (z[4] >= 0.5f) == land) cropView.restore(RectF(z[0], z[1], z[2], z[3]), 1f)
+            else cropView.restore(RectF(0.25f, 0.3f, 0.75f, 0.6f), 1f)
+            return
+        }
         val v = Prefs.cropBox(this, key) ?: return
         cropView.restore(RectF(v[0], v[1], v[2], v[3]), v[4])
     }
@@ -255,14 +268,14 @@ class CropActivity : AppCompatActivity() {
         Bus.activated.lastOrNull()?.let { if (it in names) return it }
         if (!Prefs.usePcTemplates(this)) {
             val store = TemplateStore(this)
-            return names.firstOrNull { !store.hasUserShot(it, mode) }
+            return names.firstOrNull { !WatchZones.isZone(it) && !store.hasUserShot(it, mode) }
         }
         return null
     }
 
-    /** 그 모드에서 고를 수 있는 항목 — 보스 + 로비 화면(공통로비 1·2·3 포함) + 배속 표시(자동 인식용) */
+    /** 그 모드에서 고를 수 있는 항목 — 보스 + 로비 화면(공통로비 1·2·3 포함) + 배속 표시(자동 인식용) + 감시 구역 (v3.5) */
     private fun targetsFor(m: GameMode): List<String> =
-        BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m) + PcDefaults.SPEED_SHOTS
+        BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m) + PcDefaults.SPEED_SHOTS + WatchZones.forMode(m)
 
     private fun currentCrop(): Bitmap? {
         val src = source ?: return null
@@ -312,6 +325,7 @@ class CropActivity : AppCompatActivity() {
             return
         }
         val boss = bossSpinner.selectedItem as? String ?: return
+        if (WatchZones.isZone(boss)) { saveZone(boss); return }
         val store = TemplateStore(this)
         val asExtra = planSave(store, boss)
         val replacing = asExtra && store.hasUserExtra(boss, mode)
@@ -339,6 +353,37 @@ class CropActivity : AppCompatActivity() {
             .setPositiveButton("등록") { _, _ -> doSave(crop, boss, asExtra) }
             .setNegativeButton("취소", null)
             .show()
+    }
+
+    /** 감시 구역 등록 — 사진 대신 네모의 위치(화면 비율)만 저장한다 */
+    private fun saveZone(zone: String) {
+        val src = source ?: return
+        val key = WatchZones.key(zone)
+        val had = Prefs.zone(this, key) != null
+        val b = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("구역으로 등록할까요?")
+            .setMessage("'${zone.removePrefix("📐 ")}' 으로 이 네모 자리를 등록합니다.\n" +
+                    "감시할 때 이 안에서만 찾습니다. 앱을 다시 켜거나 새 버전을 받아도 그대로 남습니다.\n" +
+                    "(보스가 이 네모 밖에 나오면 인식하지 못하니 넉넉하게 잡아 주세요)")
+            .setPositiveButton("등록") { _, _ ->
+                val r = cropView.state().first
+                val land = src.width > src.height
+                Prefs.setZone(this, key, floatArrayOf(r.left, r.top, r.right, r.bottom, if (land) 1f else 0f))
+                Bus.log("📐 [감시 구역 등록] ${zone.removePrefix("📐 ")} — 화면의 가로 ${(r.left * 100).toInt()}~${(r.right * 100).toInt()}%, " +
+                        "세로 ${(r.top * 100).toInt()}~${(r.bottom * 100).toInt()}% (${if (land) "가로" else "세로"} 화면). 바로 적용됩니다.")
+                Toast.makeText(this, "${zone.removePrefix("📐 ")} 등록했습니다", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+            .setNegativeButton("취소", null)
+        if (had) {
+            b.setNeutralButton("구역 지우기") { _, _ ->
+                Prefs.clearZone(this, key)
+                Bus.log("📐 [감시 구역 삭제] ${zone.removePrefix("📐 ")} — 이제 전체 화면에서 찾습니다.")
+                Toast.makeText(this, "구역을 지웠습니다 (전체 화면에서 찾습니다)", Toast.LENGTH_SHORT).show()
+                finish()
+            }
+        }
+        b.show()
     }
 
     private fun doSave(crop: Bitmap, boss: String, asExtra: Boolean) {

@@ -391,6 +391,20 @@ object Prefs {
     fun setCropBox(ctx: Context, key: String, v: FloatArray) =
         sp(ctx).edit().putString("crop_box_$key", v.joinToString(",")).apply()
 
+    // ── 감시 구역 (v3.5) ──
+    /** 값: "왼,위,오른,아래,가로(1)/세로(0)" — 화면에 대한 0~1 비율. 앱을 다시 켜도, 새 버전을 받아도 남는다 */
+    fun zone(ctx: Context, key: String): FloatArray? {
+        val v = sp(ctx).getString("zone_$key", null) ?: return null
+        val a = v.split(',').mapNotNull { it.toFloatOrNull() }
+        return if (a.size == 5) a.toFloatArray() else null
+    }
+
+    fun setZone(ctx: Context, key: String, v: FloatArray) =
+        sp(ctx).edit().putString("zone_$key", v.joinToString(",")).apply()
+
+    fun clearZone(ctx: Context, key: String) =
+        sp(ctx).edit().remove("zone_$key").apply()
+
     /** [사진 추가] 를 누르면 사진첩에서 고를지(기본) 파일에서 고를지 */
     fun pickFromGallery(ctx: Context): Boolean = sp(ctx).getBoolean("pick_gallery", true)
 

@@ -44,8 +44,11 @@ object BossCatalog {
     /** 기본 매칭 기준 (%) */
     const val THRESHOLD_DEFAULT = 72
 
-    /** 보스별·모드별 기준값 보정. 침공에서 양술사는 색상이 비슷한 곳에 잘 걸려서 낮춘다 */
-    val THRESHOLD_INVASION: Map<String, Int> = mapOf("양술사" to 52)
+    /** 보스별·모드별 기준값 보정 (침공). v3.5: 양술사는 오인식이 잦아 70% */
+    val THRESHOLD_INVASION: Map<String, Int> = mapOf("양술사" to 70)
+
+    /** 모든 모드 공통 기준값 보정 (v3.5) — 양술사는 태초·침공 모두 70% */
+    val THRESHOLD_ALL: Map<String, Int> = mapOf("양술사" to 70)
 
     /** 멀티스케일 검사 순서 — 앞쪽이 가장 흔한 크기라 조기 종료가 잘 걸린다 */
     val SCALES: DoubleArray =
@@ -133,6 +136,7 @@ object BossCatalog {
         if (mode == GameMode.INVASION) {
             THRESHOLD_INVASION[name]?.let { return it / 100.0 }
         }
+        THRESHOLD_ALL[name]?.let { return it / 100.0 }
         return THRESHOLD_DEFAULT / 100.0
     }
 
@@ -145,8 +149,8 @@ object BossCatalog {
      */
     val PHONE_GUARD: Set<String> = setOf("양술사")
 
-    /** 폰 오인식 방지 대상의 최소 정확도 (%) — 좁게 다시 자른 사진은 진짜일 때 90% 안팎이 나온다 */
-    const val PHONE_GUARD_MIN_PCT = 62
+    /** 폰 오인식 방지 대상의 최소 정확도 (%) — 좁게 다시 자른 사진은 진짜일 때 90% 안팎이 나온다 (v3.5: 62 → 70) */
+    const val PHONE_GUARD_MIN_PCT = 70
 
     /** 폰 오인식 방지 대상의 윤곽선 최소치 (진짜 0.5 이상 / 앱 화면 0.25 이하로 실측) */
     const val PHONE_GUARD_MIN_EDGE = 0.40
