@@ -262,6 +262,7 @@ class CaptureService : Service() {
         OverlayService.start(this)
         currentSpeed = if (Prefs.speedLock(this)) 2 else 1
         lobbyNextCheck = 0L; lobbyQuietUntil = 0L; inLobby = false
+        lastNoticeLobby = null
         paused = false; Bus.paused = false
         lastActiveAt = System.currentTimeMillis()
         handlerOn().removeCallbacks(idleTicker)
@@ -549,7 +550,6 @@ class CaptureService : Service() {
                 }
                 if (inLobby && now - lobbyLastSeen >= LOBBY_EXIT_MS) {
                     inLobby = false; Bus.lobby = false
-                    lastNoticeLobby = null
                     Bus.log("🎮 로비를 벗어났습니다. 보스 인식을 다시 시작합니다.")
                 }
             }
@@ -649,7 +649,11 @@ class CaptureService : Service() {
         stopEverything(keepOverlay = true)
     }
 
-    /** 마지막으로 안내한 로비와 시각 — 같은 로비 안내가 반복되지 않게 (v3.2) */
+    /**
+     * 마지막으로 안내한 로비와 시각 — 같은 로비 안내가 반복되지 않게 (v3.2)
+     * v3.4: 로비를 잠깐 나갔다 와도(탭만 열고 돌아오기 등) 같은 로비면 다시 안내하지 않는다.
+     *       다른 로비를 다녀왔거나, 그 사이에 보스가 인식됐다면(activate 에서 비움) 다시 안내한다.
+     */
     private var lastNoticeLobby: String? = null
     private var lastNoticeAt = 0L
 
@@ -700,7 +704,6 @@ class CaptureService : Service() {
                 lobbyMode = null
             }
 
-            val entering = !inLobby
             val label = PcDefaults.lobbyLabel(lobby)
             val oldMode = session.mode
             val newMode = lobbyMode ?: session.mode
@@ -715,7 +718,7 @@ class CaptureService : Service() {
             // 로비가 자동으로 인식되면 [보스리셋] 과 같은 형식의 안내를 띄운다 (v3.2)
             //   "태초로비 입니다." / "침공로비 입니다." / "공통로비 입니다."  — 보스가 없어도 알린다
             //   (모드 전환 글자는 따로 띄우지 않는다. 판정이 애매하면(보류) 안내하지 않는다)
-            if (!lobbyAmbiguous && (entering || lobby != lastNoticeLobby) &&
+            if (!lobbyAmbiguous && (lobby != lastNoticeLobby || modeChanged) &&
                 now - lastNoticeAt >= LOBBY_NOTICE_GAP_MS) {
                 lastNoticeLobby = lobby; lastNoticeAt = now
                 Bus.notice("${if (lobby == PcDefaults.LOBBY_COMMON) "공통로비" else lobby} 입니다.")
@@ -1007,6 +1010,7 @@ class CaptureService : Service() {
     fun activate(name: String, score: Double, auto: Boolean): Boolean {
         if (!session.activate(name, auto)) return false
         lastActiveAt = System.currentTimeMillis()
+        lastNoticeLobby = null   // v3.4: 보스를 인식했으니, 다음에 로비가 보이면 다시 안내한다
 
         val special = BossCatalog.isSpecial(name)
         // 침공 히든보스 — 80R 침공특수보스를 일찍 잡고 내 필드로 돌아가면 나온다 (마릿수에 넣지 않음, v2.3)
