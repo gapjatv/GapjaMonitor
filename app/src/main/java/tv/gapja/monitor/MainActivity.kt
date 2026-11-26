@@ -255,17 +255,22 @@ class MainActivity : AppCompatActivity() {
         // 처음 켤 때 한 번 — PC 사진을 그대로 쓸지, 폰에서 새로 등록할지 묻는다
         if (!Prefs.templateSourceAsked(this)) askTemplateSource()
 
-        // 새 버전이 있으면 알려 준다 (앱을 켤 때 한 번)
-        checkForUpdate()
     }
 
     /** 깃허브 릴리스에서 새 버전을 찾아 있으면 안내 창을 띄운다 */
-    private fun checkForUpdate() {
-        if (updateChecked) return
-        updateChecked = true
+    // v3.3: 앱이 오래 켜져 있어도(감시 서비스 때문에 프로세스가 안 죽는다) 화면으로 돌아올 때마다 확인한다.
+    //       너무 자주 묻지 않게 자동 확인은 10분에 한 번, [새 버전 확인] 버튼은 바로 확인한다.
+    private fun checkForUpdate(manual: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!manual && now - lastUpdateCheckAt < 10 * 60_000L) return
+        lastUpdateCheckAt = now
         UpdateChecker.check(this) { info ->
-            if (info == null || isFinishing || isDestroyed) return@check
-            if (Prefs.skippedUpdate(this) == info.tag) return@check
+            if (isFinishing || isDestroyed) return@check
+            if (info == null) {
+                if (manual) toast("지금 최신 버전(v${versionName()})이거나, 인터넷에 연결되지 않아 확인하지 못했습니다")
+                return@check
+            }
+            if (!manual && Prefs.skippedUpdate(this) == info.tag) return@check
             val link = info.apkUrl ?: info.pageUrl
             android.app.AlertDialog.Builder(this)
                 .setTitle("새 버전 ${info.tag} 이 나왔습니다")
@@ -373,6 +378,7 @@ class MainActivity : AppCompatActivity() {
         titleBox.addView(body("운빨존많겜 보스 알림 · 폰판 v${versionName()}"))
         header.addView(titleBox)
         col.addView(header)
+        col.addView(btn("🔄 새 버전 확인", "#2C3E50") { checkForUpdate(manual = true) })
 
         // ── 상태 ──
         statusView = TextView(this).apply {
@@ -1089,6 +1095,8 @@ class MainActivity : AppCompatActivity() {
         refresh()
         // 인터넷이 끊겨서 못 올린 사진이 있으면 다시 올린다
         GitHubSync.flush(this)
+        // 새 버전이 나왔는지 확인한다 (10분에 한 번)
+        checkForUpdate()
     }
 
     override fun onDestroy() {
@@ -1101,7 +1109,7 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         /** 새 버전 확인은 앱을 켠 뒤 한 번만 (화면을 돌릴 때마다 다시 묻지 않게) */
-        @Volatile private var updateChecked = false
+        @Volatile private var lastUpdateCheckAt = 0L
         private val BG = Color.parseColor("#FF18222C")
         private val CARD = Color.parseColor("#FF223040")
         private val ACCENT = Color.parseColor("#FF1ABC9C")
