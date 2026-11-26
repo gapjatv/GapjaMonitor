@@ -84,6 +84,13 @@ class OverlayService : Service() {
 
     private var editing = false
 
+    /** 인식위치 조절 화면 (v3.6) — 전체 화면 크기의 투명 창 */
+    private var zoneView: ZoneEditView? = null
+    private var zoneLp: WindowManager.LayoutParams? = null
+    /** 완료를 눌러 천천히 사라지는 중인지 */
+    private var zoneFading = false
+    private var menuZone: TextView? = null
+
     private val listener: () -> Unit = { render() }
 
     /** 뷰를 만들 때 쓰는 화면 — 게임이 다른 화면(뮤뮤 탭)에 있으면 그 화면용 */
@@ -100,6 +107,7 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         if (!Prefs.overlayEnabled(this)) { stopSelf(); return }
+        Bus.zoneEditing = false
         if (!attachTo(Bus.gameDisplay)) {
             Bus.log("⚠️ 화면 위에 띄울 방법이 없습니다. 메인 화면에서 '접근성' 을 켜거나 " +
                     "'다른 앱 위에 표시' 를 허용해 주세요.")
@@ -194,6 +202,7 @@ class OverlayService : Service() {
 
     /** 붙어 있는 창을 모두 뗀다 */
     private fun removeAllWindows() {
+        if (zoneView != null) finishZoneEdit(fast = true, save = false)
         if (editing) { editing = false; hidePanel() }
         hideLoading()
         hideNotice()
@@ -508,9 +517,13 @@ class OverlayService : Service() {
         val misfireBtn = menuBtn("오인식", "#E68E3B5C") { reportMisfire() }
         menuStart = startBtn; menuPause = pauseBtn; menuCapture = capBtn; menuReset = resetBtn
         menuVoice = voiceBtn; menuMode = modeBtn; menuMisfire = misfireBtn
+        // [인식위치] — 보스를 찾는 네모(태초보스·침공보스·시공보스)를 게임 화면에서 보고 옮기고 크기를 바꾼다 (v3.6)
+        val zoneBtn = menuBtn("인식위치", "#E6119DA4") { toggleZoneEdit() }
+        menuZone = zoneBtn
         val items = listOf(
             startBtn, pauseBtn, capBtn,
             menuBtn("위치조절", "#E616A085") { setEditing(!editing) },
+            zoneBtn,
             resetBtn,
             misfireBtn,
             modeBtn,
@@ -614,6 +627,7 @@ class OverlayService : Service() {
                     Color.parseColor(if (inv) "#E6E67E22" else "#E62E86C1"))
             }
         }
+        menuZone?.text = if (zoneView != null && !zoneFading) "인식위치 완료" else "인식위치"
         menuPause?.text = if (Bus.paused) "재개" else "일시정지"
         // [음성만] 을 누른 뒤에는 [사진표시] 로 바뀐다 (다시 누르면 사진이 보인다)
         val vo = Prefs.voiceOnly(this)
@@ -971,10 +985,110 @@ class OverlayService : Service() {
             if (v == null || lp == null) return
             try { w.removeView(v); w.addView(v, lp) } catch (_: Exception) {}
         }
+        again(zoneView, zoneLp)
         again(remain, remainLp)
         again(panel, panelLp)
         again(strip, stripLp)
         again(chip, chipLp)
+    }
+
+    // ── 인식위치 조절 (v3.6) ─────────────────────────────────────
+
+    /** 화면 전체 크기 (상태 표시줄·내비게이션 바까지 — 인식 화면과 같은 기준) */
+    private fun realSize(): Pair<Int, Int> {
+        val w = wm ?: return screenSize()
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val b = w.maximumWindowMetrics.bounds
+            b.width() to b.height()
+        } else {
+            val dm = android.util.DisplayMetrics()
+            @Suppress("DEPRECATION") w.defaultDisplay.getRealMetrics(dm)
+            dm.widthPixels to dm.heightPixels
+        }
+    }
+
+    /** [인식위치] 누르면 조절 화면이 열리고, 다시 누르면(또는 [완료]) 저장하고 천천히 사라진 뒤 인식을 다시 시작한다 */
+    private fun toggleZoneEdit() {
+        when {
+            zoneView == null -> startZoneEdit()
+            zoneFading -> resumeZoneEdit()
+            else -> finishZoneEdit(fast = false, save = true)
+        }
+    }
+
+    private fun startZoneEdit() {
+        val w = wm ?: return
+        if (editing) setEditing(false)
+        val (sw, sh) = realSize()
+        val v = ZoneEditView(uiCtx)
+        v.load(this, sw > sh)
+        v.onChanged = { v.saveAll(this) }
+        v.onDone = { finishZoneEdit(fast = false, save = true) }
+        val lp = WindowManager.LayoutParams(
+            sw, sh, overlayType(),
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                    WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+            PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = 0; y = 0
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P)
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        try { w.addView(v, lp) } catch (e: Exception) {
+            Bus.log("⚠️ 인식위치 화면을 띄우지 못했습니다: ${e.javaClass.simpleName}: ${e.message}")
+            Toast.makeText(this, "인식위치 화면을 열지 못했습니다", Toast.LENGTH_SHORT).show()
+            return
+        }
+        zoneView = v; zoneLp = lp; zoneFading = false
+        Bus.zoneEditing = true            // 조절하는 동안 인식은 잠시 쉰다
+        restack()                         // 버튼·사진 줄이 박스 위에 오도록
+        refreshMenu()
+        Bus.log("📐 [인식위치] 조절을 시작합니다. 인식은 잠시 쉽니다. (끝나면 [보스설정 → 인식위치 완료])")
+    }
+
+    /** 사라지는 중에 다시 눌렀을 때 — 조절을 이어서 한다 */
+    private fun resumeZoneEdit() {
+        val v = zoneView ?: return
+        zoneFading = false
+        v.animate().cancel()
+        v.alpha = 1f
+        zoneLp?.let { lp ->
+            lp.flags = lp.flags and WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE.inv()
+            try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
+        }
+        refreshMenu()
+    }
+
+    /**
+     * 인식위치 조절을 끝낸다.
+     *   fast=false: 터치를 막고 박스가 천천히 흐려지며 사라진 뒤에 인식을 다시 시작한다
+     *   fast=true : 바로 닫고 인식을 다시 시작한다
+     */
+    private fun finishZoneEdit(fast: Boolean, save: Boolean) {
+        val v = zoneView ?: return
+        if (save) v.saveAll(this)
+        val finish = {
+            try { wm?.removeView(v) } catch (_: Exception) {}
+            if (zoneView === v) { zoneView = null; zoneLp = null }
+            zoneFading = false
+            Bus.zoneEditing = false       // 여기서부터 인식을 다시 진행한다
+            refreshMenu()
+            Bus.log("📐 [인식위치] 저장했습니다. 인식을 다시 시작합니다. (${WatchZones.summary(this)})")
+        }
+        v.animate().cancel()
+        if (fast) { finish(); return }
+        zoneFading = true
+        zoneLp?.let { lp ->
+            lp.flags = lp.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            try { wm?.updateViewLayout(v, lp) } catch (_: Exception) {}
+        }
+        refreshMenu()
+        Toast.makeText(this, "인식위치를 저장했습니다", Toast.LENGTH_SHORT).show()
+        v.animate().alpha(0f).setDuration(ZONE_FADE_MS).withEndAction {
+            if (zoneFading && zoneView === v) finish()
+        }.start()
     }
 
     private fun hidePanel() {
@@ -995,6 +1109,7 @@ class OverlayService : Service() {
             return
         }
         if (editing) setEditing(false)
+        if (zoneView != null) finishZoneEdit(fast = true, save = true)   // 인식위치 네모가 캡처에 찍히지 않게
         strip?.visibility = View.INVISIBLE
         chip?.visibility = View.INVISIBLE
         main.postDelayed({
@@ -1366,6 +1481,7 @@ class OverlayService : Service() {
     /** 태블릿을 돌리면 화면 밖으로 나간 사진 줄·버튼을 안으로 들여온다 */
     override fun onConfigurationChanged(newConfig: android.content.res.Configuration) {
         super.onConfigurationChanged(newConfig)
+        if (zoneView != null) finishZoneEdit(fast = true, save = false)   // 방향이 바뀌면 인식위치 조절을 닫는다 (방향마다 따로 저장)
         val (sw, sh) = screenSize()
         stripLp?.let { lp ->
             lp.x = lp.x.coerceIn(0, max(0, sw - dp(60))); lp.y = lp.y.coerceIn(0, max(0, sh - dp(60)))
@@ -1394,6 +1510,8 @@ class OverlayService : Service() {
         Bus.onNotice = null
         Bus.onGameDisplay = null
         Bus.removeChangeListener(listener)
+        if (zoneView != null) finishZoneEdit(fast = true, save = true)
+        Bus.zoneEditing = false
         hidePanel()
         try { if (remain != null) wm?.removeView(remain) } catch (_: Exception) {}
         try { if (strip != null) wm?.removeView(strip) } catch (_: Exception) {}
@@ -1415,6 +1533,9 @@ class OverlayService : Service() {
 
         /** 위치조절 완료 후 예시 사진이 사라지는 데 걸리는 시간 */
         private const val PREVIEW_FADE_MS = 2000L
+
+        /** 인식위치 완료 후 박스가 천천히 사라지는 데 걸리는 시간 — 다 사라지면 인식을 다시 시작한다 (v3.6) */
+        private const val ZONE_FADE_MS = 2200L
 
         /** 조절 화면에서 크기를 맞춰볼 때 쓰는 예시 (판 끝까지 간 경우 11장) */
         private val PREVIEW = listOf(

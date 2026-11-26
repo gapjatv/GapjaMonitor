@@ -79,6 +79,9 @@ object Bus {
      */
     @Volatile var cropVisible: Boolean = false
 
+    /** 게임 위 [인식위치] 로 위치를 조절하는 동안 true — 인식을 잠시 쉰다 (v3.6) */
+    @Volatile var zoneEditing: Boolean = false
+
     /** 자르기 화면을 닫은 시각 — 게임으로 돌아오는 동안 로비가 잠깐 보여도 보스를 지우지 않으려고 */
     @Volatile var cropClosedAt: Long = 0L
 

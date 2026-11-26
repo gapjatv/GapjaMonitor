@@ -250,7 +250,7 @@ class CaptureService : Service() {
         markStarted(mode)
         Bus.log("▶ 감시를 시작했습니다. (화면 공유 · ${w}×${h}, 축소 ${(downscale * 100).toInt()}%, " +
                 "${intervalMs}ms 간격, 템플릿 ${templates.count()}장)")
-        Bus.log("📐 [감시 구역] ${WatchZones.summary(this)}  (✘ 는 전체 화면에서 찾습니다)")
+        logZones()
         handlerOn().post(loop)
     }
 
@@ -321,7 +321,7 @@ class CaptureService : Service() {
         a11yGapMs = max(A11Y_MIN_GAP_MS, intervalMs)
         markStarted(mode)
         Bus.log("▶ 감시를 시작했습니다. (접근성 · 확인창 없음, 약 ${a11yGapMs}ms 간격, 템플릿 ${templates.count()}장)")
-        Bus.log("📐 [감시 구역] ${WatchZones.summary(this)}  (✘ 는 전체 화면에서 찾습니다)")
+        logZones()
         handlerOn().post(a11yLoop)
     }
 
@@ -495,7 +495,7 @@ class CaptureService : Service() {
         if (!Prefs.powerSave(this)) return base
         val now = System.currentTimeMillis()
         return when {
-            inLobby || Bus.cropVisible || paused -> max(base, 1000L)
+            inLobby || Bus.cropVisible || Bus.zoneEditing || paused -> max(base, 1000L)
             now - lastFoundAt < 8000 -> max(base, 300L) * 3
             else -> max(base, 300L)
         }
@@ -542,10 +542,11 @@ class CaptureService : Service() {
             val now = System.currentTimeMillis()
 
             // 자르기 화면이 떠 있는 동안은 쉰다 (그 화면 속 게임 사진을 진짜 게임으로 착각하지 않게)
-            if (Bus.cropVisible) return
+            // v3.6: 게임 위 [인식위치] 로 위치를 조절하는 동안에도 쉰다
+            if (Bus.cropVisible || Bus.zoneEditing) return
 
-            // 로비·배속은 '로비·배속 구역' 안에서만 찾는다 (등록 안 했으면 전체 화면)
-            val lobbyRg = zoneMats(scr, listOf(WatchZones.LOBBY)).also { made.addAll(it) }
+            // 로비·공통로비·배속 표시는 전체 화면에서 찾는다 (v3.6)
+            val lobbyRg = noZone
 
             // ① 로비 화면 — 인식되면 모드를 맞추고 보스 사진을 초기화한다
             if (now >= lobbyNextCheck) {
@@ -569,13 +570,23 @@ class CaptureService : Service() {
                 checkSpeed(scr, lobbyRg)
             }
 
-            // ③ 보스 — 그 모드의 보스 구역(태초 1곳 / 침공 2곳) 안에서만 찾는다 (등록 안 했으면 전체 화면)
-            val bossRg = zoneMats(scr, WatchZones.bossZones(session.mode)).also { made.addAll(it) }
+            // ③ 보스 — 인식위치(태초보스 / 침공보스 / 시공보스) 안에서만 찾는다.
+            //    등록하지 않은 위치의 보스는 찾지 않는다. 전체 화면에서는 절대 보스를 찾지 않는다. (v3.6)
+            val zoneCache = HashMap<String, Mat?>()
+            fun zoneMatFor(zone: String): Mat? {
+                if (!zoneCache.containsKey(zone)) {
+                    zoneCache[zone] = WatchZones.rect(this, zone, scr.cols(), scr.rows())?.let { r ->
+                        try { scr.submat(r).also { made.add(it) } } catch (_: Exception) { null }
+                    }
+                }
+                return zoneCache[zone]
+            }
             for (name in BossCatalog.watchList(session.mode)) {
                 if (!running) break
                 if (!session.shouldWatch(name, now)) continue
+                val zm = zoneMatFor(WatchZones.zoneForBoss(name, session.mode)) ?: continue
                 val tpl = templates.forBoss(name, session.mode) ?: continue
-                if (detect(name, scr, tpl, now, bossRg)) {
+                if (detect(name, scr, tpl, now, listOf(zm))) {
                     // 한 바퀴에 여러 마리가 동시에 켜지면 안내가 겹치므로 하나만 처리한다
                     break
                 }
@@ -586,24 +597,21 @@ class CaptureService : Service() {
         }
     }
 
-    // ── 감시 구역 (v3.5) ──────────────────────────────────────────
+    // ── 인식위치 (v3.6) ──────────────────────────────────────────
 
-    /** 등록된 구역만 화면에서 잘라 낸다. 하나도 없으면 빈 목록 → 호출한 쪽이 전체 화면을 쓴다 */
-    private fun zoneMats(scr: Mat, zones: List<String>): List<Mat> {
-        val out = ArrayList<Mat>()
-        for (z in zones) {
-            val r = WatchZones.rect(this, z, scr.cols(), scr.rows()) ?: continue
-            try { out.add(scr.submat(r)) } catch (_: Exception) {}
-        }
-        return out
-    }
+    /** 비어 있으면 전체 화면 — 로비·배속 표시 전용. 보스에는 쓰지 않는다 */
+    private val noZone: List<Mat> = emptyList()
 
     /** 구역 하나에서 찾은 결과 — 어느 구역이었는지 같이 기억한다 (윤곽선 검사가 같은 구역을 써야 해서) */
     private class ZoneHit(val out: MatchOutcome, val rg: Mat)
 
     private val zoneWarned = HashSet<String>()
 
-    /** 사진이 들어가는 구역만 고른다. 구역이 없거나 사진이 구역보다 크면 전체 화면 */
+    /**
+     * 사진이 들어가는 구역만 고른다.
+     *   • rg 가 비어 있으면 전체 화면 (로비·배속)
+     *   • 보스는 사진이 구역보다 크면 찾을 수 없다 → 빈 목록 (전체 화면으로 대신 찾지 않는다)
+     */
     private fun fitting(rg: List<Mat>, scr: Mat, tpl: Mat): List<Mat> {
         if (rg.isEmpty()) return listOf(scr)
         val w = tpl.cols() * downscale
@@ -612,20 +620,20 @@ class CaptureService : Service() {
         if (ok.isNotEmpty()) return ok
         val k = "${tpl.cols()}x${tpl.rows()}"
         if (zoneWarned.add(k)) {
-            Bus.log("⚠️ [감시 구역] 지정한 구역이 사진(${tpl.cols()}×${tpl.rows()})보다 작아서 이 사진은 " +
-                    "전체 화면에서 찾습니다. 구역을 조금 더 크게 잡아 주세요.")
+            Bus.log("⚠️ [인식위치] 지정한 위치가 보스 사진(${tpl.cols()}×${tpl.rows()})보다 작아서 인식하지 못합니다. " +
+                    "[보스설정 → 인식위치] 에서 네모를 조금 더 크게 잡아 주세요.")
         }
-        return listOf(scr)
+        return emptyList()
     }
 
-    /** 구역들에서 각각 찾아 가장 높은 점수를 돌려준다 */
+    /** 구역들에서 각각 찾아 가장 높은 점수를 돌려준다 (구역이 비어 있으면 전체 화면, 맞는 구역이 없으면 '못 찾음') */
     private fun searchIn(rg: List<Mat>, scr: Mat, tpl: Mat, find: (Mat) -> MatchOutcome): ZoneHit {
         var best: ZoneHit? = null
         for (m in fitting(rg, scr, tpl)) {
             val o = find(m)
             if (best == null || o.score > best.out.score) best = ZoneHit(o, m)
         }
-        return best ?: ZoneHit(MatchOutcome.NONE, scr)
+        return best ?: ZoneHit(MatchOutcome.NONE, rg.firstOrNull() ?: scr)
     }
 
     /**
@@ -680,7 +688,7 @@ class CaptureService : Service() {
             if (!running) return
             val now = System.currentTimeMillis()
             // 자르기 화면을 보는 중에는 쉬는 것이 아니다
-            if (Bus.cropVisible) lastActiveAt = now
+            if (Bus.cropVisible || Bus.zoneEditing) lastActiveAt = now
             val min = Prefs.idleStopMin(this@CaptureService)
             if (min > 0 && now - lastActiveAt >= min * 60_000L) {
                 autoStop("${min}분 동안 인식이 없어 감시를 멈췄습니다.",
@@ -690,6 +698,20 @@ class CaptureService : Service() {
             }
             handlerOn().postDelayed(this, IDLE_TICK_MS)
         }
+    }
+
+    /** 시작할 때: 인식위치 등록 상태를 알리고, 지금 모드에 꼭 필요한 위치가 없으면 크게 알린다 */
+    private fun logZones() {
+        Bus.log("📐 [인식위치] ${WatchZones.summary(this)}  (✘ 인 위치의 보스는 찾지 않습니다 · 로비·배속은 전체 화면에서 찾습니다)")
+        warnMissingZones(true)
+    }
+
+    private fun warnMissingZones(notify: Boolean) {
+        val miss = WatchZones.missingFor(this, session.mode)
+        if (miss.isEmpty()) return
+        Bus.log("⚠️ [인식위치 없음] ${session.mode.label} 모드에 필요한 ${miss.joinToString(", ")} 위치가 등록되지 않아 " +
+                "그 보스는 인식하지 않습니다. ([보스설정 → 인식위치] 에서 등록하세요)")
+        if (notify) Bus.notice("${miss.joinToString("·")} 인식위치가 없어 보스를 찾지 않습니다.")
     }
 
     /** 자동으로 감시를 멈춘다 — 게임 위 [보스설정] 버튼은 남겨 두어 [시작] 으로 다시 켤 수 있다 */
@@ -766,6 +788,7 @@ class CaptureService : Service() {
                 Prefs.setMode(this, newMode.key)
                 Bus.mode = newMode
                 updateNotification("감시 중 · ${newMode.label} (${PcDefaults.speedLabel(newMode, Prefs.speedLock(this))})")
+                warnMissingZones(false)
             }
             // 로비가 자동으로 인식되면 [보스리셋] 과 같은 형식의 안내를 띄운다 (v3.2)
             //   "태초로비 입니다." / "침공로비 입니다." / "공통로비 입니다."  — 보스가 없어도 알린다
@@ -1013,6 +1036,7 @@ class CaptureService : Service() {
         Bus.mode = newMode
         updateNotification("감시 중 · ${newMode.label} (${PcDefaults.speedLabel(newMode, Prefs.speedLock(this))})")
         Bus.log("🔁 [수동 전환] ${old.label}모드 > ${newMode.label}모드로 바꿨습니다. (보스 사진은 그대로)")
+        warnMissingZones(false)
         Bus.notice("${newMode.label}모드로 바꿨습니다.")
         lastActiveAt = System.currentTimeMillis()
         Bus.onState(session, seq)

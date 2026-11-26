@@ -193,8 +193,8 @@ class CropActivity : AppCompatActivity() {
                     "더 등록하면 보조 사진이 새 사진으로 바뀝니다. (기본 사진은 그대로)\n" +
                     "• 공통로비1·2·3: 판이 끝난 '종료!' 화면 등 3가지 — 칸마다 따로 등록합니다.\n" +
                     "• 1배속상태·2배속상태: 화면의 배속 표시(자동 인식용) — '배속 자동 인식' 을 켰을 때만 쓰입니다. 태초/침공을 따로 등록하세요.\n" +
-                    "• 📐 감시 구역(맨 아래): 사진이 아니라 '찾을 자리'를 등록합니다. 보스가 나오는 자리를 보스 그림보다 넉넉하게 감싸 주세요. " +
-                    "태초는 1곳, 침공은 2곳(구역1·2)입니다. 등록하지 않은 구역은 전체 화면에서 찾습니다."
+                    "• 📐 인식위치(맨 아래): 사진이 아니라 '보스가 나오는 자리'를 등록합니다. 태초보스 · 침공보스 · 시공보스(침공 특수보스 3종) 세 곳이고, " +
+                    "보스는 등록한 위치 안에서만 인식합니다. 보스 그림보다 넉넉하게 감싸 주세요. (로비·배속은 전체 화면에서 찾습니다)"
             setPadding(0, dp(6), 0, 0)
         }
         col.addView(saveInfo)
@@ -221,7 +221,7 @@ class CropActivity : AppCompatActivity() {
 
     private fun boxKey(target: String?): String {
         val kind = when {
-            WatchZones.isZone(target) -> "zone_" + WatchZones.key(target!!)
+            WatchZones.zoneOf(target) != null -> "zone_" + WatchZones.key(WatchZones.zoneOf(target)!!)
             target != null && PcDefaults.isLobby(target) -> "lobby"
             target != null && PcDefaults.isSpeedShot(target) -> "speed"
             else -> "boss"
@@ -236,16 +236,24 @@ class CropActivity : AppCompatActivity() {
         val key = boxKey(bossSpinner.selectedItem as? String)
         if (key == boxKind) return
         boxKind = key
-        val target = bossSpinner.selectedItem as? String
-        if (WatchZones.isZone(target)) {
-            // 등록해 둔 구역이 있으면 그 자리, 없으면 화면 가운데쯤에서 시작
-            val z = Prefs.zone(this, WatchZones.key(target!!))
+        val zone = WatchZones.zoneOf(bossSpinner.selectedItem as? String)
+        if (zone != null) {
+            // 인식위치 — 등록해 둔 위치가 있으면 그 자리(마지막 설정), 없으면 기본 자리에서 시작.
+            // 다른 인식위치도 색을 달리해서 함께 보여 준다.
             val src = source
             val land = src != null && src.width > src.height
-            if (z != null && (z[4] >= 0.5f) == land) cropView.restore(RectF(z[0], z[1], z[2], z[3]), 1f)
-            else cropView.restore(RectF(0.25f, 0.3f, 0.75f, 0.6f), 1f)
+            val r = WatchZones.current(this, zone, land)
+            cropView.setAccent(WatchZones.color(zone), zone)
+            cropView.setOutlines(WatchZones.ALL.filter { it != zone }.mapNotNull { z ->
+                WatchZones.saved(this, z, land)?.let { v ->
+                    CropView.ZoneOutline(z, WatchZones.color(z), RectF(v[0], v[1], v[2], v[3]))
+                }
+            })
+            cropView.restore(RectF(r[0], r[1], r[2], r[3]), 1f)
             return
         }
+        cropView.setAccent(null, null)
+        cropView.setOutlines(emptyList())
         val v = Prefs.cropBox(this, key) ?: return
         cropView.restore(RectF(v[0], v[1], v[2], v[3]), v[4])
     }
@@ -268,14 +276,14 @@ class CropActivity : AppCompatActivity() {
         Bus.activated.lastOrNull()?.let { if (it in names) return it }
         if (!Prefs.usePcTemplates(this)) {
             val store = TemplateStore(this)
-            return names.firstOrNull { !WatchZones.isZone(it) && !store.hasUserShot(it, mode) }
+            return names.firstOrNull { WatchZones.zoneOf(it) == null && !store.hasUserShot(it, mode) }
         }
         return null
     }
 
     /** 그 모드에서 고를 수 있는 항목 — 보스 + 로비 화면(공통로비 1·2·3 포함) + 배속 표시(자동 인식용) + 감시 구역 (v3.5) */
     private fun targetsFor(m: GameMode): List<String> =
-        BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m) + PcDefaults.SPEED_SHOTS + WatchZones.forMode(m)
+        BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m) + PcDefaults.SPEED_SHOTS + WatchZones.ALL.map { WatchZones.label(it) }
 
     private fun currentCrop(): Bitmap? {
         val src = source ?: return null
@@ -325,7 +333,7 @@ class CropActivity : AppCompatActivity() {
             return
         }
         val boss = bossSpinner.selectedItem as? String ?: return
-        if (WatchZones.isZone(boss)) { saveZone(boss); return }
+        WatchZones.zoneOf(boss)?.let { saveZone(it); return }
         val store = TemplateStore(this)
         val asExtra = planSave(store, boss)
         val replacing = asExtra && store.hasUserExtra(boss, mode)
@@ -355,31 +363,30 @@ class CropActivity : AppCompatActivity() {
             .show()
     }
 
-    /** 감시 구역 등록 — 사진 대신 네모의 위치(화면 비율)만 저장한다 */
+    /** 인식위치 등록 — 사진 대신 네모의 위치(화면 비율)만 저장한다 */
     private fun saveZone(zone: String) {
         val src = source ?: return
-        val key = WatchZones.key(zone)
-        val had = Prefs.zone(this, key) != null
+        val had = WatchZones.isRegistered(this, zone)
         val b = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("구역으로 등록할까요?")
-            .setMessage("'${zone.removePrefix("📐 ")}' 으로 이 네모 자리를 등록합니다.\n" +
-                    "감시할 때 이 안에서만 찾습니다. 앱을 다시 켜거나 새 버전을 받아도 그대로 남습니다.\n" +
+            .setTitle("인식위치로 등록할까요?")
+            .setMessage("'$zone' 인식위치로 이 네모 자리를 등록합니다.\n" +
+                    "감시할 때 보스는 이 안에서만 찾습니다. 앱을 다시 켜거나 새 버전을 받아도 그대로 남습니다.\n" +
                     "(보스가 이 네모 밖에 나오면 인식하지 못하니 넉넉하게 잡아 주세요)")
             .setPositiveButton("등록") { _, _ ->
                 val r = cropView.state().first
                 val land = src.width > src.height
-                Prefs.setZone(this, key, floatArrayOf(r.left, r.top, r.right, r.bottom, if (land) 1f else 0f))
-                Bus.log("📐 [감시 구역 등록] ${zone.removePrefix("📐 ")} — 화면의 가로 ${(r.left * 100).toInt()}~${(r.right * 100).toInt()}%, " +
+                WatchZones.save(this, zone, r.left, r.top, r.right, r.bottom, land)
+                Bus.log("📐 [인식위치 등록] $zone — 화면의 가로 ${(r.left * 100).toInt()}~${(r.right * 100).toInt()}%, " +
                         "세로 ${(r.top * 100).toInt()}~${(r.bottom * 100).toInt()}% (${if (land) "가로" else "세로"} 화면). 바로 적용됩니다.")
-                Toast.makeText(this, "${zone.removePrefix("📐 ")} 등록했습니다", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "$zone 인식위치를 등록했습니다", Toast.LENGTH_SHORT).show()
                 finish()
             }
             .setNegativeButton("취소", null)
         if (had) {
-            b.setNeutralButton("구역 지우기") { _, _ ->
-                Prefs.clearZone(this, key)
-                Bus.log("📐 [감시 구역 삭제] ${zone.removePrefix("📐 ")} — 이제 전체 화면에서 찾습니다.")
-                Toast.makeText(this, "구역을 지웠습니다 (전체 화면에서 찾습니다)", Toast.LENGTH_SHORT).show()
+            b.setNeutralButton("위치 지우기") { _, _ ->
+                WatchZones.clear(this, zone)
+                Bus.log("📐 [인식위치 삭제] $zone — 이 위치의 보스는 다시 등록할 때까지 인식하지 않습니다.")
+                Toast.makeText(this, "$zone 인식위치를 지웠습니다", Toast.LENGTH_SHORT).show()
                 finish()
             }
         }
@@ -623,8 +630,20 @@ class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -
         canvas.drawRect(vis.left, r.bottom, vis.right, vis.bottom, dim)
         canvas.drawRect(vis.left, r.top, r.left, r.bottom, dim)
         canvas.drawRect(r.right, r.top, vis.right, r.bottom, dim)
+        // 인식위치를 고른 경우: 다른 인식위치를 색을 달리해 함께 보여 주고, 지금 고른 박스도 그 위치의 색으로 그린다 (v3.6)
+        for (o in outlines) {
+            val orc = RectF(
+                imgRect.left + o.rect.left * imgRect.width(), imgRect.top + o.rect.top * imgRect.height(),
+                imgRect.left + o.rect.right * imgRect.width(), imgRect.top + o.rect.bottom * imgRect.height())
+            outlinePaint.color = o.color
+            canvas.drawRect(orc, outlinePaint)
+            drawTag(canvas, orc, o.name, o.color)
+        }
+        val ac = accent ?: Color.parseColor("#F39C12")
+        border.color = ac; handle.color = ac
         canvas.drawRect(r, border)
         for ((x, y) in corners(r)) canvas.drawCircle(x, y, dp(9f), handle)
+        accentLabel?.let { drawTag(canvas, r, it, ac) }
         val px = cropRectInBitmap()
         canvas.drawText("${px.width().toInt()} × ${px.height().toInt()}", r.left, r.bottom + dp(16f), label)
         canvas.drawText("확대 ${"%.1f".format(zoom)}배  (두 손가락으로 확대·축소)", dp(8f), dp(16f), zoomLabel)
@@ -632,6 +651,37 @@ class CropView(ctx: Context, private val bmp: Bitmap, private val onChange: () -
     }
 
     private fun corners(r: RectF) = listOf(r.left to r.top, r.right to r.top, r.left to r.bottom, r.right to r.bottom)
+
+    // ── 인식위치 표시 (v3.6) ──
+    /** 다른 인식위치 한 곳 — 이름·색·화면 비율 네모 */
+    class ZoneOutline(val name: String, val color: Int, val rect: RectF)
+
+    private var outlines: List<ZoneOutline> = emptyList()
+    private var accent: Int? = null
+    private var accentLabel: String? = null
+
+    fun setOutlines(list: List<ZoneOutline>) { outlines = list; invalidate() }
+    fun setAccent(color: Int?, label: String?) { accent = color; accentLabel = label; invalidate() }
+
+    private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = dp(2.5f) }
+    private val tagFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.parseColor("#F0101A24") }
+    private val tagLine = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = dp(1.5f) }
+    private val tagText = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.WHITE; textSize = dp(12f); typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER
+    }
+
+    /** 네모 위쪽 선 가운데에 이름표 — 선이 이름표 뒤로 지나간다 */
+    private fun drawTag(c: Canvas, r: RectF, name: String, color: Int) {
+        val tw = tagText.measureText(name)
+        val ph = dp(22f)
+        val cy = r.top
+        val pill = RectF(r.centerX() - tw / 2f - dp(9f), cy - ph / 2f, r.centerX() + tw / 2f + dp(9f), cy + ph / 2f)
+        tagLine.color = color
+        c.drawRoundRect(pill, ph / 2f, ph / 2f, tagFill)
+        c.drawRoundRect(pill, ph / 2f, ph / 2f, tagLine)
+        val fm = tagText.fontMetrics
+        c.drawText(name, pill.centerX(), pill.centerY() - (fm.ascent + fm.descent) / 2f, tagText)
+    }
 
     private var drag = -1          // -1 없음, 0~3 모서리, 4 네모 이동, 5 사진 이동
     private var lastX = 0f; private var lastY = 0f
