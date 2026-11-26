@@ -85,11 +85,34 @@ object PcDefaults {
 
     val LOBBIES: List<String> = listOf(LOBBY_NORMAL, LOBBY_INVASION, LOBBY_COMMON)
 
-    fun isLobby(name: String): Boolean = name in LOBBIES
+    /**
+     * 공통로비는 화면이 3가지라서 칸이 3개다 (v3.2): 공통로비1 · 공통로비2 · 공통로비3.
+     * 사진 파일은 공통로비.png · 공통로비_2.png · 공통로비_3.png. 셋 다 인식되면 보스를 초기화한다.
+     */
+    val COMMON_SLOTS: List<String> = listOf("공통로비1", "공통로비2", "공통로비3")
+
+    fun isCommonSlot(name: String): Boolean = name in COMMON_SLOTS
+
+    /** 공통로비 칸 → 사진 파일 이름 */
+    fun commonFile(slot: String): String = when (slot) {
+        "공통로비2" -> "공통로비_2.png"
+        "공통로비3" -> "공통로비_3.png"
+        else -> "공통로비.png"
+    }
+
+    /** 공통로비 사진 파일 3개 (이 순서) */
+    val COMMON_FILES: List<String> = COMMON_SLOTS.map { commonFile(it) }
+
+    fun isLobby(name: String): Boolean = name in LOBBIES || isCommonSlot(name)
+
+    /** 배속 표시 칸 (배속 자동 인식용) — 태초: 1배속상태.png, 침공: 침공_1배속상태.png */
+    val SPEED_SHOTS: List<String> = listOf("1배속상태", "2배속상태")
+
+    fun isSpeedShot(name: String): Boolean = name in SPEED_SHOTS
 
     /** 자르기 화면에서 그 모드에 보여줄 로비 항목 */
     fun lobbiesFor(mode: GameMode): List<String> =
-        if (mode == GameMode.NORMAL) listOf(LOBBY_NORMAL, LOBBY_COMMON) else listOf(LOBBY_INVASION, LOBBY_COMMON)
+        (if (mode == GameMode.NORMAL) listOf(LOBBY_NORMAL) else listOf(LOBBY_INVASION)) + COMMON_SLOTS
 
     /** PC MATCH_THRESHOLD — 로비 화면 인식 기준 */
     const val LOBBY_THRESHOLD = 0.60

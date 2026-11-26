@@ -190,7 +190,9 @@ class CropActivity : AppCompatActivity() {
         saveInfo = TextView(this).apply {
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
             text = "보스(로비)를 고르고 [등록] 을 누르세요. 보스마다 기본 1장 + 보조 1장까지 등록되고, " +
-                    "더 등록하면 보조 사진이 새 사진으로 바뀝니다. (기본 사진은 그대로)"
+                    "더 등록하면 보조 사진이 새 사진으로 바뀝니다. (기본 사진은 그대로)\n" +
+                    "• 공통로비1·2·3: 판이 끝난 '종료!' 화면 등 3가지 — 칸마다 따로 등록합니다.\n" +
+                    "• 1배속상태·2배속상태: 화면의 배속 표시(자동 인식용) — '배속 자동 인식' 을 켰을 때만 쓰입니다. 태초/침공을 따로 등록하세요."
             setPadding(0, dp(6), 0, 0)
         }
         col.addView(saveInfo)
@@ -216,7 +218,11 @@ class CropActivity : AppCompatActivity() {
     // ── 네모 위치 기억 ──
 
     private fun boxKey(target: String?): String {
-        val kind = if (target != null && PcDefaults.isLobby(target)) "lobby" else "boss"
+        val kind = when {
+            target != null && PcDefaults.isLobby(target) -> "lobby"
+            target != null && PcDefaults.isSpeedShot(target) -> "speed"
+            else -> "boss"
+        }
         val src = source
         val land = src != null && src.width > src.height
         return kind + if (land) "_land" else "_port"
@@ -254,9 +260,9 @@ class CropActivity : AppCompatActivity() {
         return null
     }
 
-    /** 그 모드에서 고를 수 있는 항목 — 보스 + 로비 화면 */
+    /** 그 모드에서 고를 수 있는 항목 — 보스 + 로비 화면(공통로비 1·2·3 포함) + 배속 표시(자동 인식용) */
     private fun targetsFor(m: GameMode): List<String> =
-        BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m)
+        BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m) + PcDefaults.SPEED_SHOTS
 
     private fun currentCrop(): Bitmap? {
         val src = source ?: return null
@@ -290,6 +296,8 @@ class CropActivity : AppCompatActivity() {
 
     /** 저장할 파일 이름을 정한다 — 처음이면 기본 사진 자리, 이미 내가 등록한 사진이 있으면 보조 사진 */
     private fun planSave(store: TemplateStore, boss: String): Boolean {
+        // 공통로비 칸·배속 표시는 보조 없이 그 칸을 새 사진으로 바꾼다
+        if (PcDefaults.isCommonSlot(boss) || PcDefaults.isSpeedShot(boss)) return false
         val base = if (mode == GameMode.INVASION && !PcDefaults.isLobby(boss))
             "${TemplateStore.INVASION_PREFIX}$boss.png" else "$boss.png"
         // 없거나 앱 기본 사진(핸드폰 기본·PC)이면 기본 사진 자리에 넣는다 (기본 사진은 보관해 두어 되돌릴 수 있다)
@@ -307,8 +315,18 @@ class CropActivity : AppCompatActivity() {
         val store = TemplateStore(this)
         val asExtra = planSave(store, boss)
         val replacing = asExtra && store.hasUserExtra(boss, mode)
-        val what = if (PcDefaults.isLobby(boss)) boss else "$boss (${mode.label})"
+        val what = when {
+            PcDefaults.isCommonSlot(boss) -> boss
+            PcDefaults.isLobby(boss) -> boss
+            PcDefaults.isSpeedShot(boss) -> "$boss (${mode.label} 배속 표시)"
+            else -> "$boss (${mode.label})"
+        }
+        val slotName = if (PcDefaults.isCommonSlot(boss)) PcDefaults.commonFile(boss)
+            else if (PcDefaults.isSpeedShot(boss)) "${store.baseName(boss, mode)}.png" else null
+        val replaceNote = if (slotName != null && store.isUser(slotName) && store.exists(slotName))
+            "\n(이미 등록한 사진이 있으면 이 사진으로 바꿉니다. 이전 사진은 보관해 두므로 되돌릴 수 있습니다)" else ""
         val how = when {
+            slotName != null -> replaceNote
             replacing -> "\n(기본 사진은 그대로 두고, 지금 있는 보조 사진을 지운 뒤 이 사진으로 바꿉니다 — 보조는 1장만)"
             asExtra -> "\n(기본 사진은 그대로 두고 보조 사진으로 추가합니다)"
             else -> ""

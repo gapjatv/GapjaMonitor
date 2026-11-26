@@ -2,6 +2,7 @@ package tv.gapja.monitor
 
 import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.drawable.GradientDrawable
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
@@ -50,12 +51,13 @@ class GalleryActivity : AppCompatActivity() {
         // ── 등록 현황 (폰에서 직접 등록한 사진 기준) ──
         val store = TemplateStore(this)
         col.addView(TextView(this).apply {
-            text = if (Prefs.usePcTemplates(this@GalleryActivity))
-                "지금은 기본 사진을 함께 쓰는 중입니다. 아래 ✔ 는 직접 등록한 사진이 있는 항목이에요. " +
-                        "✔ 항목은 내 사진만 쓰고 그 보스의 기본 사진은 쓰지 않습니다."
-            else "지금은 직접 등록한 사진만 씁니다. ○ 인 항목은 아직 인식되지 않으니 [보스설정 → 보스캡처] 로 등록해 주세요."
+            text = "각 칸에는 지금 인식에 실제로 쓰이는 사진 한 장만 보여 줍니다.\n" +
+                    "• ✔ 내 사진 — 내가 직접 등록한 사진 (있으면 앱 기본 사진보다 우선합니다)\n" +
+                    "• 기본 사진 — 앱에 처음부터 들어 있는 사진 (등록하지 않아도 이 사진으로 인식합니다)\n" +
+                    "• ＋ 등록 필요 — 아직 사진이 없는 칸입니다. 눌러서 등록 방법을 확인하세요."
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
             setPadding(0, dp(6), 0, 0)
+            setLineSpacing(0f, 1.25f)
         })
         for (m in listOf(GameMode.NORMAL, GameMode.INVASION)) {
             val targets = BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m)
@@ -85,34 +87,113 @@ class GalleryActivity : AppCompatActivity() {
         val tplDir = File(filesDir, "templates")
         val all = (tplDir.listFiles { f -> f.name.lowercase().endsWith(".png") } ?: emptyArray())
             .sortedBy { it.name }
-        val extraRe = Regex("_[2-9]\\.png$")
-        val lobbies = all.filter { f -> PcDefaults.LOBBIES.any { f.name.startsWith(it) } }
-        val speeds = all.filter { it.name.contains("배속상태") }
-        val extras = all.filter { it !in lobbies && it !in speeds && extraRe.containsMatchIn(it.name) }
-        // 침공에만 나오는 보스(침공특수보스 3종)는 이름에 '침공_' 이 없어도 태초 칸에 넣지 않는다 (v2.3)
-        val inv = all.filter {
-            (it.name.startsWith(TemplateStore.INVASION_PREFIX) ||
-                    BossCatalog.isInvasionOnly(it.name.removeSuffix(".png"))) &&
-                    it !in speeds && it !in extras
+
+        fun cell(label: String, fileName: String?): Cell {
+            val f = fileName?.let { File(tplDir, it) }?.takeIf { it.exists() }
+            return Cell(label, f, f != null && f.name in Prefs.userTemplates(this))
         }
-        val normal = all.filter { it !in lobbies && it !in speeds && it !in extras && it !in inv }
 
         col.addView(TextView(this).apply {
-            text = "※ 보조 사진은 누르면 지우기 · 인식용 사진을 길게 누르면 지우기 · 이전 사진으로 되돌리기 · 앱 기본 사진으로 되돌리기"
+            text = "※ 사진을 길게 누르면 지우기 · 이전 사진으로 되돌리기 · 앱 기본 사진으로 되돌리기"
             setTextColor(Color.parseColor("#FFF39C12")); textSize = 12f
             setPadding(0, dp(12), 0, 0)
         })
-        section(col, "로비 화면 (인식되면 보스 사진 초기화)", lobbies, "아직 없습니다. 자르기 화면에서 '태초로비 · 침공로비 · 공통로비' 를 골라 넣어 주세요.")
-        section(col, "인식용 사진 · 태초 보스", normal, null)
-        section(col, "인식용 사진 · 침공 보스 (침공_) · 침공특수보스 · 침공 히든보스", inv, null)
-        section(col, "보조 사진 (_2) · 눌러서 지우기 — 보스마다 1장", extras,
+        val normalCells = BossCatalog.watchList(GameMode.NORMAL).map { cell(it, store.activeBossFile(it, GameMode.NORMAL)) }
+        val invCells = BossCatalog.watchList(GameMode.INVASION).map { cell(it, store.activeBossFile(it, GameMode.INVASION)) }
+        val lobbyCells = listOf(PcDefaults.LOBBY_NORMAL, PcDefaults.LOBBY_INVASION).map { cell(it, store.lobbyShots(it).firstOrNull()) } +
+                PcDefaults.COMMON_SLOTS.map { cell(it, PcDefaults.commonFile(it)) }
+        val speedCells = PcDefaults.SPEED_SHOTS.map { cell("태초 $it", "$it.png") } +
+                PcDefaults.SPEED_SHOTS.map { cell("침공 $it", "${TemplateStore.INVASION_PREFIX}$it.png") }
+        cellSection(col, "로비 화면 (인식되면 보스 사진 초기화)", lobbyCells)
+        cellSection(col, "인식용 사진 · 태초 보스", normalCells)
+        cellSection(col, "인식용 사진 · 침공 보스 · 침공특수보스 · 침공 히든보스", invCells)
+        // 보조 사진(_2) — 내가 등록한 것만 (공통로비_2 는 공통로비2 칸이라 여기서 뺀다)
+        val extras = all.filter {
+            it.name.endsWith("_2.png") && it.name in Prefs.userTemplates(this) && it.name !in PcDefaults.COMMON_FILES
+        }
+        section(col, "내 보조 사진 (_2) · 눌러서 지우기 — 보스마다 1장", extras,
             "아직 없습니다. 같은 보스를 한 번 더 등록하면 보조 사진이 됩니다. (게임 위 [보스설정 → 보스캡처])",
             tapDelete = true)
-        section(col, "배속 표시 (배속 자동 인식용)", speeds, null)
+        cellSection(col, "배속 표시 (배속 자동 인식용 — 태초·침공 따로)", speedCells)
 
         val disp = (File(filesDir, "display").listFiles { f -> f.name.lowercase().endsWith(".png") } ?: emptyArray())
             .sortedBy { it.name }
         section(col, "게임 위에 뜨는 기본 보스 사진", disp, null, round = true)
+    }
+
+    private data class Cell(val label: String, val file: File?, val mine: Boolean)
+
+    /** 칸마다 '지금 쓰는 사진 한 장'을 보여 준다. 사진이 없으면 이름만 보이는 빈 칸(＋ 등록 필요). */
+    private fun cellSection(col: LinearLayout, title: String, cells: List<Cell>) {
+        val have = cells.count { it.file != null }
+        col.addView(TextView(this).apply {
+            text = "$title  ·  $have / ${cells.size}"
+            setTextColor(Color.WHITE); textSize = 15f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, dp(18), 0, dp(6))
+        })
+        val avail = UiInsets.contentWidth(this, 900) - dp(28)
+        val cols = max(2, avail / dp(120))
+        val grid = GridLayout(this).apply { columnCount = cols }
+        val itemW = avail / cols
+        for (c in cells) {
+            val box = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(dp(4), dp(4), dp(4), dp(6))
+            }
+            val h = (itemW * 0.7f).toInt()
+            if (c.file != null) {
+                box.addView(ImageView(this).apply {
+                    scaleType = ImageView.ScaleType.FIT_CENTER
+                    setBackgroundColor(Color.parseColor("#FF0E1A24"))
+                    setImageBitmap(loadThumb(c.file, itemW))
+                }, LinearLayout.LayoutParams(itemW - dp(8), h))
+                box.setOnLongClickListener { manage(c.file); true }
+            } else {
+                // 사진이 없으면 비워 두고 이름만 — 눌러서 등록 방법 확인
+                box.addView(TextView(this).apply {
+                    text = "＋"
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.parseColor("#FF5D6D7E")); textSize = 22f
+                    background = GradientDrawable().apply {
+                        setColor(Color.parseColor("#FF0E1A24"))
+                        setStroke(dp(1), Color.parseColor("#FF3A4B5C"), dp(4).toFloat(), dp(3).toFloat())
+                        cornerRadius = dp(6).toFloat()
+                    }
+                }, LinearLayout.LayoutParams(itemW - dp(8), h))
+                box.setOnClickListener { showRegisterHelp(c.label) }
+            }
+            box.addView(TextView(this).apply {
+                text = c.label + when {
+                    c.file == null -> "\n＋ 등록 필요"
+                    c.mine -> "\n✔ 내 사진"
+                    else -> "\n기본 사진"
+                }
+                setTextColor(Color.parseColor(if (c.file == null) "#FFF39C12" else "#FFD5DEE6")); textSize = 11f
+                gravity = Gravity.CENTER
+                maxLines = 2
+            })
+            grid.addView(box, GridLayout.LayoutParams().apply { width = itemW })
+        }
+        col.addView(grid)
+    }
+
+    /** 사진이 없는 칸을 눌렀을 때 — 등록 방법 */
+    private fun showRegisterHelp(label: String) {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("'$label' 사진이 아직 없습니다")
+            .setMessage("이 칸은 아직 인식용 사진이 없어서 인식되지 않습니다.\n\n" +
+                    "등록하는 법\n" +
+                    "1. 게임에서 이 화면(또는 보스)이 보일 때 게임 위 [보스설정 → 보스캡처] 를 누릅니다.\n" +
+                    "2. 자르기 화면에서 위쪽 [태초/침공] 과 '어떤 보스(로비)인가요?' 에서 '$label' 에 맞는 항목을 고릅니다.\n" +
+                    "3. 주황 네모로 감싸고 [등록] 을 누릅니다.\n\n" +
+                    "이미 찍어 둔 화면이 있으면 메인 화면 [캡처함] 에서 잘라 등록해도 됩니다.")
+            .setPositiveButton("캡처함 열기") { _, _ ->
+                try { startActivity(android.content.Intent(this, SnapsActivity::class.java)) } catch (_: Exception) {}
+            }
+            .setNegativeButton("닫기", null)
+            .show()
     }
 
     private fun section(col: LinearLayout, title: String, files: List<File>, emptyText: String?,

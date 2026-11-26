@@ -86,6 +86,11 @@ class BossA11yService : AccessibilityService() {
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
                 val pkg = event.packageName?.toString() ?: return
+                // 결제·금융 앱이 앞에 뜨면 화면 공유를 끊는다 (공유 중이면 이런 앱이 결제를 막는다)
+                if (Bus.running && Prefs.stopOnSecureApp(this) && isSecureApp(pkg)) {
+                    CaptureService.send(this, CaptureService.ACTION_SECURE_APP, pkg = pkg)
+                    return
+                }
                 if (!isGame(pkg)) return
                 val disp = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) event.displayId else Display.DEFAULT_DISPLAY
                 setGame(disp, pkg)
@@ -96,6 +101,9 @@ class BossA11yService : AccessibilityService() {
             }
         }
     }
+
+    /** 결제·간편결제·은행 앱인지 — 앱 이름(패키지)이 이 목록으로 시작하면 그렇다고 본다 */
+    private fun isSecureApp(pkg: String): Boolean = SECURE_APP_PREFIXES.any { pkg.startsWith(it) }
 
     private val labelCache = HashMap<String, String>()
 
@@ -162,6 +170,16 @@ class BossA11yService : AccessibilityService() {
     }
 
     companion object {
+        /** 화면 공유 중이면 결제·인증이 막히는 대표 앱들 (삼성페이·간편결제·은행·증권) */
+        private val SECURE_APP_PREFIXES = listOf(
+            "com.samsung.android.spay", "com.samsung.android.samsungpay", "com.samsung.android.spaylite",
+            "com.nhn.android.npay", "com.kakaopay", "com.kakaobank", "viva.republica.toss",
+            "com.kbankwith", "com.kbstar", "com.shinhan", "com.wooribank", "com.nonghyup", "com.hanabank",
+            "com.kebhana", "com.ibk", "com.scbank", "com.epost.psf", "kr.co.citibank", "com.lguplus.paynow",
+            "com.google.android.apps.walletnfcrel", "com.nhnent.payapp", "com.lotte.lpay", "com.ssg.pay",
+            "kr.danal", "com.paycoapp", "com.mobiletoss"
+        )
+
         private const val TAG = "BossA11y"
 
         /**

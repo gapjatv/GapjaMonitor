@@ -110,6 +110,9 @@ object BossCatalog {
 
     // ── 조회 함수 ──────────────────────────────────────────────────
 
+    /** 침공에서만 나오는 일반 보스 — 태초 등록·인식 목록에서는 뺀다 (v3.2) */
+    val NORMAL_EXCLUDED: Set<String> = setOf("쿨타임")
+
     /** 해당 보스가 침공특수보스인지 */
     fun isSpecial(name: String): Boolean = name in INVASION_SPECIAL
 
@@ -122,7 +125,7 @@ object BossCatalog {
         isSpecial(name) || isInvasionHidden(name, mode)
 
     /** 침공에만 나오는 보스인지 — 태초 화면 목록에서는 뺀다 (침공특수보스 3종) */
-    fun isInvasionOnly(name: String): Boolean = isSpecial(name)
+    fun isInvasionOnly(name: String): Boolean = isSpecial(name) || name in NORMAL_EXCLUDED
 
     /** 보스·모드별 매칭 기준값을 0~1 범위로 돌려준다 */
     fun threshold(name: String, mode: GameMode, overrides: Map<String, Int> = emptyMap()): Double {
@@ -155,7 +158,7 @@ object BossCatalog {
     /** 그 모드에서 감시해야 하는 보스 전체 */
     fun watchList(mode: GameMode): List<String> = when (mode) {
         GameMode.INVASION -> INVASION_MAIN_POOL + INVASION_SPECIAL + HIDDEN
-        GameMode.NORMAL -> BOSS_NAMES
+        GameMode.NORMAL -> BOSS_NAMES.filter { it !in NORMAL_EXCLUDED }
     }
 }
 

@@ -67,16 +67,11 @@ class TemplateStore(private val ctx: Context) {
     fun isPhoneShot(fileName: String): Boolean = isUser(fileName) || isDeviceBundled(fileName)
 
     /**
-     * 인식에 써도 되는 사진인지.
-     * '새로 등록' 을 고르면 PC 사진은 쓰지 않고 내가 등록한 사진만 쓴다.
-     * (PC 화면과 폰 화면은 크기·모양이 달라서 PC 사진이 엉뚱한 곳에 걸리는 일이 있다)
-     * 배속 표시는 예외로 항상 쓴다.
+     * 인식에 써도 되는 사진인지 — 파일이 있으면 쓴다. (v3.2)
+     * 처음 설치하면 앱에 들어 있는 기본 사진으로 바로 인식하고,
+     * 내가 등록한 사진이 있는 보스(로비)만 내 사진이 우선한다. ('기본 / 직접 새로 등록' 어느 쪽을 골라도 같다)
      */
-    fun usable(fileName: String): Boolean {
-        if (!File(dir, fileName).exists()) return false
-        if (Prefs.usePcTemplates(ctx)) return true
-        return isPhoneShot(fileName) || fileName.contains("배속상태")
-    }
+    fun usable(fileName: String): Boolean = File(dir, fileName).exists()
 
     fun getUsable(fileName: String): Mat? = if (usable(fileName)) get(fileName) else null
 
@@ -98,6 +93,7 @@ class TemplateStore(private val ctx: Context) {
      * 침공: 침공_ 내 사진 → (없으면) 태초 내 사진. 태초: 태초 내 사진.
      */
     fun userShotsFor(name: String, mode: GameMode): List<String> {
+        if (PcDefaults.isCommonSlot(name)) return PcDefaults.commonFile(name).let { if (isUser(it) && exists(it)) listOf(it) else emptyList() }
         if (PcDefaults.isLobby(name)) return userShots(name)
         if (mode == GameMode.INVASION) {
             val inv = userShots("${INVASION_PREFIX}$name")
@@ -127,6 +123,8 @@ class TemplateStore(private val ctx: Context) {
 
     /** 로비 화면 사진들 — 내 사진이 있으면 내 사진만, 없으면 기본 + 보조 중 쓸 수 있는 것 */
     fun lobbyShots(lobby: String): List<String> {
+        // 공통로비는 화면이 3가지 — 있는 사진을 모두 쓴다 (서로 다른 화면이라 '내 사진 우선' 을 적용하지 않는다)
+        if (lobby == PcDefaults.LOBBY_COMMON) return PcDefaults.COMMON_FILES.filter { usable(it) }
         val mine = userShots(lobby)
         if (mine.isNotEmpty()) return mine
         return (listOf("$lobby.png") + extraShots(lobby)).filter { usable(it) }
@@ -134,6 +132,7 @@ class TemplateStore(private val ctx: Context) {
 
     /** 그 보스(또는 로비)에 내가 등록한 사진이 하나라도 있는지 — 등록 도우미용 */
     fun hasUserShot(name: String, mode: GameMode): Boolean {
+        if (PcDefaults.isCommonSlot(name)) return userShotsFor(name, mode).isNotEmpty()
         val bases = when {
             invasionOnlyShots(name, mode) -> listOf("${INVASION_PREFIX}$name")
             mode == GameMode.INVASION && !PcDefaults.isLobby(name) -> listOf("${INVASION_PREFIX}$name", name)
@@ -211,6 +210,19 @@ class TemplateStore(private val ctx: Context) {
         return if (usable(base) && get(base) != null) base else null
     }
 
+    /**
+     * 지금 그 보스 인식에 실제로 쓰이는 기본 사진 파일 이름 (없으면 null) — 사진 보기 화면용 (v3.2).
+     * [forBossFile] 과 같은 순서(내 사진 → 침공_ 기본 → 기본)이지만 사진을 읽지 않고 파일이 있는지만 본다.
+     */
+    fun activeBossFile(name: String, mode: GameMode): String? {
+        userShotsFor(name, mode).firstOrNull()?.let { return it }
+        val inv = "${INVASION_PREFIX}$name.png"
+        if (mode == GameMode.INVASION && usable(inv)) return inv
+        if (invasionOnlyShots(name, mode)) return null
+        val base = "$name.png"
+        return if (usable(base)) base else null
+    }
+
     /** 보스의 보조 스샷 파일 이름 목록 (존재하는 것만) */
     fun extraShots(name: String): List<String> =
         BossCatalog.EXTRA_SHOT_SUFFIXES
@@ -269,9 +281,11 @@ class TemplateStore(private val ctx: Context) {
      */
     fun saveCrop(bmp: Bitmap, boss: String, mode: GameMode, asExtra: Boolean): String? {
         val base = baseName(boss, mode)
-        val name = if (!asExtra) "$base.png" else "$base$USER_EXTRA.png"
+        // 공통로비 1·2·3 은 칸마다 파일이 정해져 있다 (보조 없이 그 칸을 새 사진으로 바꾼다)
+        val name = if (PcDefaults.isCommonSlot(boss)) PcDefaults.commonFile(boss)
+                   else if (!asExtra) "$base.png" else "$base$USER_EXTRA.png"
         val removed = ArrayList<String>()
-        if (asExtra) {
+        if (asExtra && !PcDefaults.isCommonSlot(boss)) {
             for (sfx in BossCatalog.EXTRA_SHOT_SUFFIXES) {
                 val n = "$base$sfx.png"
                 if (n == name || !isUser(n)) continue

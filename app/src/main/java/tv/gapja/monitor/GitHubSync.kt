@@ -50,7 +50,7 @@ object GitHubSync {
     /** 깃허브에 맞출 사진 이름인지 — 기본 사진({이름}.png)과 보조 1장({이름}_2.png) 만 */
     fun isSyncName(name: String): Boolean =
         name.endsWith(".png") && !name.contains('/') && !name.contains('\\') &&
-                !Regex("_[3-9]\\.png$").containsMatchIn(name) && !name.contains("배속상태")
+                (name == "공통로비_3.png" || !Regex("_[3-9]\\.png$").containsMatchIn(name))
 
     /** 열쇠가 있고 자동 저장이 켜져 있는지 */
     fun active(ctx: Context): Boolean =

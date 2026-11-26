@@ -159,7 +159,15 @@ class CaptureService : Service() {
                 updateNotification("일시정지 · ${session.mode.label}")
                 Bus.onState(session, seq)
             }
+            // 결제·금융 앱이 앞에 떴다 (접근성이 켜져 있을 때 알아챈다) — 화면 공유를 바로 끊는다
+            ACTION_SECURE_APP -> {
+                val pkg = intent.getStringExtra(EXTRA_PKG) ?: ""
+                handlerOn().post { if (running) autoStop("결제·금융 앱이 열려 감시를 멈췄습니다.",
+                    "결제·금융 앱($pkg)이 열려 감시를 멈췄습니다. (화면 공유 때문에 결제가 막히지 않게) " +
+                            "게임을 다시 하려면 [보스설정 → 시작]") }
+            }
             ACTION_RESUME -> handlerOn().post {
+                lastActiveAt = System.currentTimeMillis()
                 paused = false; Bus.paused = false
                 lobbyNextCheck = 0L; inLobby = false
                 Bus.log("▶️ [재개] 보스 인식을 다시 시작합니다.")
@@ -255,6 +263,9 @@ class CaptureService : Service() {
         currentSpeed = if (Prefs.speedLock(this)) 2 else 1
         lobbyNextCheck = 0L; lobbyQuietUntil = 0L; inLobby = false
         paused = false; Bus.paused = false
+        lastActiveAt = System.currentTimeMillis()
+        handlerOn().removeCallbacks(idleTicker)
+        handlerOn().postDelayed(idleTicker, IDLE_TICK_MS)
         updateNotification("감시 중 · ${session.mode.label} (${PcDefaults.speedLabel(session.mode, Prefs.speedLock(this))})")
     }
 
@@ -428,6 +439,7 @@ class CaptureService : Service() {
     private fun stopEverything(keepOverlay: Boolean = false) {
         if (!running && projection == null) return
         running = false
+        handler?.removeCallbacks(idleTicker)
         viaA11y = false
         endGame()
         try { virtualDisplay?.release() } catch (_: Exception) {}
@@ -537,6 +549,7 @@ class CaptureService : Service() {
                 }
                 if (inLobby && now - lobbyLastSeen >= LOBBY_EXIT_MS) {
                     inLobby = false; Bus.lobby = false
+                    lastNoticeLobby = null
                     Bus.log("🎮 로비를 벗어났습니다. 보스 인식을 다시 시작합니다.")
                 }
             }
@@ -605,8 +618,40 @@ class CaptureService : Service() {
     /** 마지막 로비 판정 로그 시각 (같은 내용이 계속 쌓이지 않게) */
     private var lastLobbyAmbigLog = 0L
 
-    /** 로비 글자를 이미 한 번 띄웠는지 — 다음 보스가 인식되면 다시 false (v2.2) */
-    private var lobbyNoticeShown = false
+    // ── 결제 앱 보호: 한동안 인식이 없으면 감시를 멈춘다 (v3.2) ──
+    //  화면 공유 중이면 삼성페이·은행 앱 같은 보안 앱이 결제를 막는다. 게임을 안 하는 동안에는 공유를 끊는다.
+    /** 게임이 보인다고 볼 수 있는 마지막 시각 — 로비·보스가 인식됐거나 사용자가 버튼을 눌렀을 때 */
+    @Volatile private var lastActiveAt = 0L
+
+    private val idleTicker = object : Runnable {
+        override fun run() {
+            if (!running) return
+            val now = System.currentTimeMillis()
+            // 자르기 화면을 보는 중에는 쉬는 것이 아니다
+            if (Bus.cropVisible) lastActiveAt = now
+            val min = Prefs.idleStopMin(this@CaptureService)
+            if (min > 0 && now - lastActiveAt >= min * 60_000L) {
+                autoStop("${min}분 동안 인식이 없어 감시를 멈췄습니다.",
+                    "${min}분 동안 로비·보스가 인식되지 않아 감시를 멈췄습니다. " +
+                            "(결제 앱 등이 화면 공유 때문에 막히지 않게) 게임을 다시 하려면 [보스설정 → 시작]")
+                return
+            }
+            handlerOn().postDelayed(this, IDLE_TICK_MS)
+        }
+    }
+
+    /** 자동으로 감시를 멈춘다 — 게임 위 [보스설정] 버튼은 남겨 두어 [시작] 으로 다시 켤 수 있다 */
+    private fun autoStop(short: String, why: String) {
+        if (!running) return
+        Bus.log("💤 [자동 멈춤] $why")
+        // 멈추면 서비스가 끝나므로 안내를 먼저 띄운다 (게임 위 [보스설정] 은 남는다)
+        Bus.notice(short)
+        stopEverything(keepOverlay = true)
+    }
+
+    /** 마지막으로 안내한 로비와 시각 — 같은 로비 안내가 반복되지 않게 (v3.2) */
+    private var lastNoticeLobby: String? = null
+    private var lastNoticeAt = 0L
 
     private fun checkLobby(scr: Mat, now: Long): Boolean {
         // ── v2.0: 로비 3종을 모두 재고, 가장 높은 것을 고른다 ──
@@ -629,6 +674,7 @@ class CaptureService : Service() {
 
             // 태초로비·침공로비가 둘 다 맞았는데 점수 차이가 작으면 어느 쪽인지 믿지 않는다
             // → 로비로는 보되(보스 초기화는 함), 모드는 바꾸지 않는다
+            var lobbyAmbiguous = false
             if (lobbyMode != null) {
                 val other = hits.firstOrNull { it.mode != null && it.mode != lobbyMode }
                 if (other != null && best - other.score < PcDefaults.LOBBY_MODE_MARGIN) {
@@ -640,6 +686,7 @@ class CaptureService : Service() {
                                 "(그 기기에서 로비 사진을 직접 등록하면 확실해집니다)")
                     }
                     lobbyMode = null
+                    lobbyAmbiguous = true
                 }
             }
 
@@ -665,25 +712,15 @@ class CaptureService : Service() {
                 Bus.mode = newMode
                 updateNotification("감시 중 · ${newMode.label} (${PcDefaults.speedLabel(newMode, Prefs.speedLock(this))})")
             }
-            // 게임 화면 가운데 조금 아래에 잠깐 알린다 (예: 태초모드 > 침공모드 전환)
-            val willReset = session.activationOrder.isNotEmpty() && now - Bus.cropClosedAt >= CROP_GRACE_MS
-            if (modeChanged || entering || willReset) {
-                val head = when {
-                    modeChanged -> (if (newMode == GameMode.INVASION) "🔥 " else "🟢 ") +
-                            "${oldMode.label}모드 > ${newMode.label}모드 전환"
-                    top.mode == null -> "🏁 $label 인식"
-                    lobbyMode == null -> "🏠 로비 인식"
-                    else -> "🏠 $label 인식"
-                }
-                // 로비·모드 전환 글자는 메인 화면 스위치로 켜고 끈다 (기본 끄기, v2.0)
-                // v2.2: 로비 글자는 처음 한 번만 — 다음 보스가 인식될 때까지는
-                //       로비가 다시 보이거나 태초 ⇄ 침공 로비로 넘어가도 글자를 또 띄우지 않는다
-                //       (모드 전환·보스 초기화는 그대로 한다)
-                if (Prefs.lobbyNotice(this) && !lobbyNoticeShown) {
-                    lobbyNoticeShown = true
-                    Bus.notice(if (willReset) "$head\n보스 사진 초기화" else head)
-                }
+            // 로비가 자동으로 인식되면 [보스리셋] 과 같은 형식의 안내를 띄운다 (v3.2)
+            //   "태초로비 입니다." / "침공로비 입니다." / "공통로비 입니다."  — 보스가 없어도 알린다
+            //   (모드 전환 글자는 따로 띄우지 않는다. 판정이 애매하면(보류) 안내하지 않는다)
+            if (!lobbyAmbiguous && (entering || lobby != lastNoticeLobby) &&
+                now - lastNoticeAt >= LOBBY_NOTICE_GAP_MS) {
+                lastNoticeLobby = lobby; lastNoticeAt = now
+                Bus.notice("${if (lobby == PcDefaults.LOBBY_COMMON) "공통로비" else lobby} 입니다.")
             }
+            lastActiveAt = now
             // 자르기 화면에서 막 돌아온 직후(15초)에는 로비가 잠깐 보여도 보스를 지우지 않는다
             // (게임이 다시 접속하면서 로비를 잠깐 보여 주는 경우가 있어서)
             if (session.activationOrder.isNotEmpty() && now - Bus.cropClosedAt < CROP_GRACE_MS) {
@@ -777,7 +814,11 @@ class CaptureService : Service() {
         // PC 사진을 쓸 때는 PC판 기준값(대부분 60%)을,
         // 폰에서 새로 등록한 사진만 쓸 때는 폰판 기준값(72%)을 쓴다.
         // 폰 사진은 크기가 정확히 맞아서 높은 기준으로도 잘 잡히고, 엉뚱한 곳(로비 그림 등)에 덜 걸린다.
-        val th0 = if (Prefs.usePcTemplates(this))
+        // v3.2: 기본(PC) 사진을 쓰는 보스는 PC 기준값, 내가 등록한 사진·이 기기 기본 사진은 폰 기준값
+        //       (단 '기본 사진 그대로' 를 골랐으면 예전처럼 전부 PC 기준값)
+        val usedFile = templates.forBossFile(name, session.mode)
+        val pcStyle = Prefs.usePcTemplates(this) || usedFile == null || !templates.isPhoneShot(usedFile)
+        val th0 = if (pcStyle)
             BossCatalog.threshold(name, session.mode, PcDefaults.thresholds(session.mode, Prefs.thresholds(this)))
         else BossCatalog.threshold(name, session.mode, Prefs.thresholds(this))
         val strict = BossCatalog.isStrict(name, Prefs.strictBosses(this))
@@ -914,8 +955,8 @@ class CaptureService : Service() {
         Bus.mode = newMode
         updateNotification("감시 중 · ${newMode.label} (${PcDefaults.speedLabel(newMode, Prefs.speedLock(this))})")
         Bus.log("🔁 [수동 전환] ${old.label}모드 > ${newMode.label}모드로 바꿨습니다. (보스 사진은 그대로)")
-        Bus.notice((if (newMode == GameMode.INVASION) "🔥 " else "🟢 ") +
-                "${old.label}모드 > ${newMode.label}모드 전환")
+        Bus.notice("${newMode.label}모드로 바꿨습니다.")
+        lastActiveAt = System.currentTimeMillis()
         Bus.onState(session, seq)
     }
 
@@ -927,7 +968,7 @@ class CaptureService : Service() {
     private fun reportMisfire() {
         val name = session.activationOrder.lastOrNull()
         if (name == null) {
-            Bus.notice("🚩 신고할 보스가 없습니다"); return
+            Bus.notice("신고할 보스가 없습니다."); return
         }
         val mode = session.mode
         val shot = lastShots.remove(name)
@@ -945,7 +986,8 @@ class CaptureService : Service() {
                  else if (sent) "화면을 깃허브 misfire/${GitHubSync.folder()} 폴더로 보냅니다."
                  else "깃허브 열쇠가 없어 화면은 사진첩에만 남깁니다.") +
                 " ${MISFIRE_COOLDOWN_SEC.toInt()}초 동안은 이 보스를 다시 잡지 않습니다.")
-        Bus.notice("🚩 '$name' 오인식 신고\n" + if (sent) "사진을 깃허브로 보냅니다" else "목록에서 지웠습니다")
+        Bus.notice("'$name' 오인식으로 지웠습니다." + if (sent) " (사진 전송)" else "")
+        lastActiveAt = System.currentTimeMillis()
         if (shot != null) {
             Thread {
                 try {
@@ -964,8 +1006,7 @@ class CaptureService : Service() {
 
     fun activate(name: String, score: Double, auto: Boolean): Boolean {
         if (!session.activate(name, auto)) return false
-        // 새 판에서 보스가 나왔으니, 다음에 로비로 돌아가면 로비 글자를 다시 한 번 띄운다
-        lobbyNoticeShown = false
+        lastActiveAt = System.currentTimeMillis()
 
         val special = BossCatalog.isSpecial(name)
         // 침공 히든보스 — 80R 침공특수보스를 일찍 잡고 내 필드로 돌아가면 나온다 (마릿수에 넣지 않음, v2.3)
@@ -1302,6 +1343,15 @@ class CaptureService : Service() {
         const val ACTION_EXIT = "tv.gapja.monitor.EXIT"
         const val ACTION_PAUSE = "tv.gapja.monitor.PAUSE"
         const val ACTION_RESUME = "tv.gapja.monitor.RESUME"
+        /** 결제·금융 앱이 열렸다 — 접근성 서비스가 보낸다 */
+        const val ACTION_SECURE_APP = "tv.gapja.monitor.SECURE_APP"
+        const val EXTRA_PKG = "pkg"
+
+        /** 자동 멈춤 검사 간격 */
+        private const val IDLE_TICK_MS = 10_000L
+
+        /** 같은 로비 안내를 이만큼은 건너뛴다 */
+        private const val LOBBY_NOTICE_GAP_MS = 4_000L
 
         /** 자르기 화면을 닫은 뒤 로비 초기화를 미루는 시간 */
         private const val CROP_GRACE_MS = 15_000L
@@ -1366,10 +1416,11 @@ class CaptureService : Service() {
          *    onCreate 에서 startForeground(mediaProjection) 를 부르는데, 화면 공유 동의가
          *    없으면 Android 14부터 앱이 죽는다. (모드·되돌리기 버튼을 시작 전에 누를 때)
          */
-        fun send(ctx: Context, action: String, mode: GameMode? = null) {
+        fun send(ctx: Context, action: String, mode: GameMode? = null, pkg: String? = null) {
             if (instance == null) return
             val i = Intent(ctx, CaptureService::class.java).setAction(action)
             if (mode != null) i.putExtra(EXTRA_MODE, mode.key)
+            if (pkg != null) i.putExtra(EXTRA_PKG, pkg)
             try { ctx.startService(i) } catch (_: Exception) {}
         }
     }

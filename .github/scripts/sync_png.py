@@ -29,9 +29,9 @@ REPO = "gapjatv/png"
 MAPPING = [("phone", "templates_phone"), ("mumu", "templates_mumu")]
 STAMP_DIRS = ["templates", "templates_phone", "templates_mumu", "display", "voices", "alarms"]
 
-# 기본 사진({이름}.png) 또는 보조 1장({이름}_2.png) — 이름은 한글·영문·숫자·공백·밑줄
+# 기본 사진({이름}.png) 또는 보조 1장({이름}_2.png), 공통로비_3.png — 이름은 한글·영문·숫자·공백·밑줄
 NAME_RE = re.compile(r"^[0-9A-Za-z가-힣 _]+\.png$")
-OVER_LIMIT_RE = re.compile(r"_[3-9]\.png$")
+OVER_LIMIT_RE = re.compile(r"(?<!공통로비)_[3-9]\.png$")   # 공통로비_3.png 는 세 번째 공통로비라서 허용
 MAX_BYTES = 3 * 1024 * 1024
 
 summary = []

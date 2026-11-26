@@ -409,6 +409,18 @@ object Prefs {
     fun setAssetsStamp(ctx: Context, v: String) =
         sp(ctx).edit().putString("assets_stamp", v).apply()
 
+    // ── 결제 앱 보호 (v3.2) ─────────────────────────────────────
+
+    /** 로비·보스가 이 시간(분) 동안 인식되지 않으면 감시를 자동으로 멈춘다 (0 = 끔) */
+    fun idleStopMin(ctx: Context): Int = sp(ctx).getInt("idle_stop_min", 10)
+
+    fun setIdleStopMin(ctx: Context, v: Int) = sp(ctx).edit().putInt("idle_stop_min", v).apply()
+
+    /** 결제·금융 앱이 열리면 감시를 멈출지 (접근성이 켜져 있을 때만 알아챈다) */
+    fun stopOnSecureApp(ctx: Context): Boolean = sp(ctx).getBoolean("stop_secure_app", true)
+
+    fun setStopOnSecureApp(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("stop_secure_app", v).apply()
+
     // ── 새 버전 알림 (v3.0) ──────────────────────────────────────
 
     /** '이 버전 건너뛰기' 를 누른 버전 이름 (예: v3.1) — 그 버전은 다시 알리지 않는다 */

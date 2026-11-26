@@ -1053,42 +1053,19 @@ class OverlayService : Service() {
 
     // ── 로비·모드 전환 알림 (화면 가운데 조금 아래, 2.5초) ─────────
 
-    private var notice: View? = null
-    private val hideNoticeRunnable = Runnable { hideNotice() }
+    // v3.2 — 로비·모드 전환·자동 멈춤 안내는 [보스리셋] 을 눌렀을 때와 같은 토스트(검은 반투명 + 앱 아이콘 + 글자)로 통일
+    private var noticeToast: Toast? = null
 
     private fun showNotice(text: String) {
         hideNotice()
-        val tv = TextView(uiCtx).apply {
-            this.text = text
-            setTextColor(Color.WHITE); textSize = 17f
-            setTypeface(typeface, Typeface.BOLD)
-            gravity = Gravity.CENTER
-            setLineSpacing(dp(3).toFloat(), 1f)
-            setPadding(dp(22), dp(12), dp(22), dp(12))
-            background = GradientDrawable().apply {
-                cornerRadius = dp(16).toFloat()
-                setColor(Color.parseColor("#E6101A24"))
-                setStroke(dp(2), Color.parseColor(if (text.contains("침공")) "#E67E22" else "#1ABC9C"))
-            }
-        }
-        val (_, sh) = screenSize()
-        val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-            overlayType(),
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply { gravity = Gravity.CENTER; y = (sh * 0.12f).toInt() }
-        try { wm?.addView(tv, lp); notice = tv } catch (_: Exception) { return }
-        tv.alpha = 0f
-        tv.animate().alpha(1f).setDuration(180).start()
-        main.removeCallbacks(hideNoticeRunnable)
-        main.postDelayed(hideNoticeRunnable, 2500)
+        val t = Toast.makeText(this, text.replace("\n", " "), Toast.LENGTH_SHORT)
+        noticeToast = t
+        t.show()
     }
 
     private fun hideNotice() {
-        main.removeCallbacks(hideNoticeRunnable)
-        notice?.let { try { wm?.removeView(it) } catch (_: Exception) {} }
-        notice = null
+        noticeToast?.cancel()
+        noticeToast = null
     }
 
     // ── '캡처 준비 중…' 안내 (화면 가운데) ───────────────────────

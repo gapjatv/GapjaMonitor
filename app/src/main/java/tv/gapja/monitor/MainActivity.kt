@@ -300,10 +300,12 @@ class MainActivity : AppCompatActivity() {
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("인식용 보스 사진을 어떻게 할까요?")
             .setMessage(
-                "• 기본 사진 그대로 (추천): 앱에 들어 있는 보스·로비 사진으로 바로 시작합니다. " +
-                "인식이 잘 안 되는 보스만 게임 중 [보스설정 → 보스캡처] 로 추가하면 함께 씁니다.\n\n" +
-                "• 직접 새로 등록: PC 사진은 빼고, 내가 캡처한 사진과 이 기기용(핸드폰) 기본 사진만 씁니다. " +
-                "핸드폰 기본 사진에 없는 보스·로비는 직접 등록해야 인식됩니다. 지금 등록된 내 사진: ${mine}장\n\n" +
+                "어느 쪽을 골라도 처음에는 앱에 들어 있는 기본 사진으로 바로 인식합니다. " +
+                "그러다 보스마다 내가 직접 캡처해 등록하면, 그 보스만 내 사진으로 바뀝니다. " +
+                "기본 사진으로 잘 인식되는 보스는 굳이 등록하지 않아도 됩니다.\n\n" +
+                "• 기본 사진 그대로 (추천): 모든 사진을 같은 기준(보통 60%)으로 비교합니다.\n\n" +
+                "• 직접 새로 등록: 내가 찍은 사진과 이 기기용 사진은 더 엄격한 기준(72%)으로 비교해서 엉뚱한 곳에 덜 걸립니다. " +
+                "앱 기본(PC) 사진을 쓰는 보스는 보통 기준을 씁니다. 지금 등록된 내 사진: ${mine}장\n\n" +
                 "언제든 메인 화면 '인식용 사진' 에서 바꿀 수 있습니다." +
                 if (Prefs.templateSourceAsked(this)) "\n\n(지금: ${if (usingDefault) "기본 사진 그대로" else "직접 새로 등록"})" else ""
             )
@@ -314,7 +316,7 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("직접 새로 등록") { _, _ ->
                 Prefs.setUsePcTemplates(this, false)
-                Bus.log("🆕 [인식용 사진] 직접 등록한 사진만 씁니다. 등록 현황은 '저장된 보스 사진 보기' 에서 확인하세요.")
+                Bus.log("🆕 [인식용 사진] 내가 등록한 사진은 엄격한 기준으로 씁니다. 등록 안 한 보스는 기본 사진으로 인식합니다.")
                 refresh()
                 if (Prefs.userTemplates(this).isEmpty()) showRegisterGuide()
             }
@@ -330,7 +332,7 @@ class MainActivity : AppCompatActivity() {
                 "1. [시작] 을 누르고 게임을 켭니다.\n" +
                 "2. 보스가 나오면 게임 위 [보스설정 → 보스캡처] 를 누릅니다.\n" +
                 "3. 두 손가락으로 확대해서 주황 네모로 보스만 감싸고, 보스 이름을 고른 뒤 [저장].\n" +
-                "4. 로비 화면(태초로비 · 침공로비)과 '다시하기' 화면(공통로비)도 같은 방법으로 등록하면 " +
+                "4. 로비 화면(태초로비 · 침공로비)과 '다시하기' 화면(공통로비 1·2·3)도 같은 방법으로 등록하면 " +
                 "판이 끝날 때 보스 사진이 자동으로 초기화됩니다.\n\n" +
                 "태초와 침공은 보스 그림이 조금 달라서 각각 등록해야 합니다. " +
                 "등록 현황은 '저장된 보스 사진 보기' 맨 위에 나옵니다."
@@ -450,12 +452,8 @@ class MainActivity : AppCompatActivity() {
         }
         col.addView(modeBtn)
         col.addView(body("누르면 태초 ⇄ 침공. 감시 중 로비 화면이 보이면 자동으로 바뀝니다."))
-        col.addView(check("로비·모드 전환 글자 표시  (게임 화면 위 '🏠 태초로비 인식', '태초모드 > 침공모드 전환' 등 · 기본 끔)",
-            Prefs.lobbyNotice(this)) {
-            Prefs.setLobbyNotice(this, it)
-            Bus.log(if (it) "🏠 [로비 글자] 로비·모드 전환 글자를 게임 화면에 보여 줍니다."
-                    else "🏠 [로비 글자] 로비·모드 전환 글자를 끕니다. (인식·모드 전환·초기화는 그대로)")
-        })
+        col.addView(body("로비가 자동으로 인식되면 게임 화면 아래쪽에 '태초로비 입니다.' · '침공로비 입니다.' 안내가 잠깐 뜨고 보스 사진이 초기화됩니다. " +
+                "모드를 손으로 바꿀 때는 게임 위 [보스설정 → 태초/침공] 버튼을 쓰세요. (보스 사진은 그대로 두고 모드만 바뀝니다)"))
         val speedBtn = btn("", "#16A085") {}
         fun syncSpeed() {
             val locked = Prefs.speedLock(this)
@@ -472,6 +470,16 @@ class MainActivity : AppCompatActivity() {
         col.addView(speedBtn)
         col.addView(body("기본은 2배속 고정 (태초는 항상 2배속, 침공은 앞 ${PcDefaults.INVASION_EARLY_2X_PCT}% 구간만 2배속). " +
                 "누르면 화면의 배속 표시를 읽는 자동 인식으로 바뀝니다."))
+
+        // ── 결제 앱 보호 (v3.2) ──
+        col.addView(h("결제 앱 보호"))
+        col.addView(body("감시 중에는 '화면 공유' 때문에 삼성페이·은행·간편결제 앱이 막힐 수 있습니다. " +
+                "게임을 안 하는 동안에는 자동으로 감시를 멈춰서 화면 공유를 끊습니다. (멈춘 뒤에는 게임 위 [보스설정 → 시작])"))
+        col.addView(slider("자동 멈춤 — 인식이 없으면 (0=끔)", 0, 60, Prefs.idleStopMin(this), "분") {
+            Prefs.setIdleStopMin(this, it)
+        })
+        col.addView(check("결제·금융 앱이 열리면 바로 멈춤  (인식 방식을 '접근성' 으로 켜 둔 경우에만 알아챕니다)",
+            Prefs.stopOnSecureApp(this)) { Prefs.setStopOnSecureApp(this, it) })
 
         // ── 보스 사진 표시 ──
         col.addView(h("보스 사진 표시"))
@@ -914,10 +922,6 @@ class MainActivity : AppCompatActivity() {
         if (templates.count() == 0) {
             toast("인식용 보스 사진이 없습니다. 고급 설정에서 PNG를 추가해 주세요"); return
         }
-        if (!Prefs.usePcTemplates(this) && Prefs.userTemplates(this).isEmpty()) {
-            // 새로 등록 모드인데 아직 한 장도 없으면 인식은 안 되지만, 캡처하려면 시작은 해야 한다
-            toast("아직 등록한 사진이 없습니다. 게임에서 [보스설정 → 보스캡처] 로 등록해 주세요")
-        }
         if (!OverlayService.canDraw(this)) {
             toast("게임 위에 사진을 띄우려면 '다른 앱 위에 표시'를 허용해 주세요")
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -987,8 +991,8 @@ class MainActivity : AppCompatActivity() {
         val m = GameMode.from(Prefs.mode(this))
         val targets = BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m)
         val done = targets.count { templates.hasUserShot(it, m) }
-        sourceView?.text = (if (usePc) "🧩 기본 사진으로 인식하는 중 (직접 캡처한 사진도 함께 씀)\n"
-                else "🆕 직접 등록한 사진만 쓰는 중\n") +
+        sourceView?.text = (if (usePc) "🧩 기본 사진 그대로 — 내가 등록한 보스만 내 사진으로 바뀜\n"
+                else "🆕 직접 새로 등록 — 내 사진은 엄격한 기준, 등록 안 한 보스는 기본 사진\n") +
                 "내가 등록한 사진: ${Prefs.userTemplates(this).size}장 · ${m.label} 등록 현황 $done/${targets.size}"
         val a11y = Prefs.useA11y(this)
         val a11yOn = BossA11yService.isOn(this)
@@ -1011,7 +1015,7 @@ class MainActivity : AppCompatActivity() {
         addBtn?.text = if (gal) "📷 사진 추가 — 사진첩에서 스크린샷 골라 보스·로비 잘라 넣기"
         else "📁 사진 추가 — 파일에서 잘라 둔 PNG 가져오기"
         addWhereBtn?.text = "가져올 곳: ${if (gal) "사진첩 (기본)" else "파일"}  · 눌러서 바꾸기"
-        sourceBtn?.text = if (usePc) "🆕 직접 새로 등록해서 쓰기로 바꾸기" else "🧩 기본 사진도 같이 쓰기로 바꾸기"
+        sourceBtn?.text = if (usePc) "🆕 '직접 새로 등록' 방식으로 바꾸기" else "🧩 '기본 사진 그대로' 방식으로 바꾸기"
         // 로비 인식으로 서비스가 모드를 바꿨을 수 있으니 저장된 값을 다시 읽는다
         mode = GameMode.from(Prefs.mode(this))
         modeBtn?.let { b ->
@@ -1021,10 +1025,11 @@ class MainActivity : AppCompatActivity() {
         val all = BossCatalog.watchList(mode)
         val avail = templates.availableBosses(all, mode).size
         val voices = java.io.File(filesDir, "voices").listFiles { f -> f.name.lowercase().endsWith(".mp3") }?.size ?: 0
-        val lobbies = PcDefaults.LOBBIES.count { java.io.File(java.io.File(filesDir, "templates"), "$it.png").exists() }
+        val lobbyFiles = listOf("태초로비.png", "침공로비.png") + PcDefaults.COMMON_FILES
+        val lobbies = lobbyFiles.count { java.io.File(java.io.File(filesDir, "templates"), it).exists() }
         resView.text = "게임 위 보스 사진  ${AssetInstaller.displayCount(this)}종\n" +
                 "인식용 사진  ${templates.count()}장 (이 모드에서 ${avail}/${all.size}종 인식 가능)\n" +
-                "로비 화면  ${lobbies}/3 (태초로비 · 침공로비 · 공통로비)\n" +
+                "로비 화면  ${lobbies}/5 (태초로비 · 침공로비 · 공통로비 1·2·3)\n" +
                 "음성 MP3  ${voices}개 · 위험 경보음 ${AssetInstaller.alarmCount(this)}개"
 
         startBtn.text = if (Bus.running) "멈춤" else "시작"
