@@ -1,7 +1,8 @@
-# 운빨보스알림 안드로이드 앱 — GitHub 서버에서 APK 를 만든다.
+# 보스알림(배포용) 안드로이드 앱 — GitHub 서버에서 APK 를 만든다.
+# 개인용(main 브랜치)의 Releases · apk 브랜치를 덮어쓰지 않도록 이름을 따로 쓴다.
 # 코드를 올리거나(Actions 탭에서 'Run workflow') 누르면 빌드되고,
 # 결과 APK 는 실행 결과 화면 아래 'Artifacts' 에서 내려받는다.
-name: Build APK
+name: Build APK (release)
 
 on:
   push:
@@ -28,13 +29,6 @@ jobs:
           echo "sdkmanager: $SDKM"
           yes | "$SDKM" --licenses > /dev/null || true
 
-      # 깃허브 사진 저장소(gapjatv/png)의 phone/ · mumu/ 사진을 앱 기본 사진에 덮어 넣는다 (v2.8)
-      # 앱에서 등록한 사진이 자동으로 올라가는 곳이다. 가져오지 못하면 저장소에 있던 사진으로 그대로 빌드한다.
-      - name: Sync boss photos from gapjatv/png
-        env:
-          PNG_TOKEN: ${{ secrets.PNG_TOKEN }}
-        run: python3 .github/scripts/sync_png.py
-
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.11.1"
@@ -54,14 +48,14 @@ jobs:
           mkdir -p out
           V=${{ steps.ver.outputs.v }}
           D=app/build/outputs/apk/debug
-          cp $D/app-arm64-v8a-debug.apk   out/UnbbalBossAlarm-v$V-phone.apk
-          cp $D/app-armeabi-v7a-debug.apk out/UnbbalBossAlarm-v$V-phone32.apk
-          cp $D/app-x86_64-debug.apk      out/UnbbalBossAlarm-v$V-mumu.apk
+          cp $D/app-arm64-v8a-debug.apk   out/BossAlarm-v$V-phone.apk
+          cp $D/app-armeabi-v7a-debug.apk out/BossAlarm-v$V-phone32.apk
+          cp $D/app-x86_64-debug.apk      out/BossAlarm-v$V-mumu.apk
           ls -la out
 
       - uses: actions/upload-artifact@v4
         with:
-          name: UnbbalBossAlarm-apk
+          name: BossAlarm-apk
           path: out/*.apk
           retention-days: 30
 
@@ -70,12 +64,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          V=v${{ steps.ver.outputs.v }}
+          V=bossalarm-v${{ steps.ver.outputs.v }}
           gh release view $V >/dev/null 2>&1 || \
-            gh release create $V --title "운빨보스알림 $V" --target "$GITHUB_SHA" --notes "폰·태블릿: -phone.apk / 오래된 32비트 폰: -phone32.apk / 뮤뮤플레이어 등 PC 앱플레이어: -mumu.apk"
+            gh release create $V --title "보스알림 $V" --target "$GITHUB_SHA" --notes "폰·태블릿: -phone.apk / 오래된 32비트 폰: -phone32.apk / 뮤뮤플레이어 등 PC 앱플레이어: -mumu.apk"
           gh release upload $V out/*.apk --clobber
 
-      # 최신 APK 를 'apk' 브랜치에도 보관한다
+      # 최신 APK 를 'apk-release' 브랜치에도 보관한다 (개인용 'apk' 브랜치와 따로)
       - name: Store APK on apk branch
         run: |
           git config user.name "github-actions"
@@ -86,4 +80,4 @@ jobs:
           cp /tmp/apkbr/*.apk .
           git add *.apk
           git commit -qm "APK ${GITHUB_SHA::7}"
-          git push -f origin apk-tmp:apk
+          git push -f origin apk-tmp:apk-release

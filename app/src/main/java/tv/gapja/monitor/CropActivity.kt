@@ -39,7 +39,6 @@ import kotlin.math.min
  *   • 보스마다 기본 1장 + 보조 1장까지 (v2.8)
  *   • 처음 등록: {보스}.png (침공이면 침공_{보스}.png)
  *   • 두 번째부터: 보조 사진 {보스}_2.png — 이미 보조 사진이 있으면 지우고 새 사진으로 바꾼다 (기본 사진은 그대로)
- *   • 깃허브 열쇠가 있으면 등록한 사진을 깃허브 사진 저장소에도 자동으로 올린다
  *
  * 이 화면에서 바로 [태초]/[침공] 을 고를 수 있다. 고른 모드에 맞는 보스와
  * 로비 화면(태초: 태초로비·공통로비 / 침공: 침공로비·공통로비)이 목록에 나온다.
@@ -353,11 +352,10 @@ class CropActivity : AppCompatActivity() {
             asExtra -> "\n(기본 사진은 그대로 두고 보조 사진으로 추가합니다)"
             else -> ""
         }
-        val gh = if (GitHubSync.active(this)) "\n☁️ 깃허브 사진 저장소에도 자동으로 올립니다." else ""
         // 물어보는 것은 한 번만: 등록 / 취소
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("등록할까요?")
-            .setMessage("'$what' 사진으로 등록합니다." + how + gh)
+            .setMessage("'$what' 사진으로 등록합니다." + how)
             .setPositiveButton("등록") { _, _ -> doSave(crop, boss, asExtra) }
             .setNegativeButton("취소", null)
             .show()
@@ -401,7 +399,7 @@ class CropActivity : AppCompatActivity() {
         }
         rememberBox(boss)
         Bus.log("✂️ [사진 등록] '$name' 저장 (${crop.width}×${crop.height}, ${mode.label}) — 바로 인식에 쓰입니다. " +
-                "사진첩 › 운빨보스알림 에도 넣었습니다.")
+                "사진첩 › 보스알림 에도 넣었습니다.")
         val snapPath = intent.getStringExtra(EXTRA_PATH)
         val snap = snapPath?.let { java.io.File(it) }?.takeIf { it.parentFile?.name == "snaps" }
         if (snap != null) {

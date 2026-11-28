@@ -513,10 +513,8 @@ class OverlayService : Service() {
         val voiceBtn = menuBtn("음성만", "#E6B7950B") { toggleVoiceOnly() }
         // [태초] ⇄ [침공] — 로비 인식이 안 됐을 때 모드를 손으로 바꾼다 (글자는 지금 모드)
         val modeBtn = menuBtn(Bus.mode.label, "#E62E86C1") { toggleModeByHand() }
-        // [오인식] — 방금 인식된 보스가 잘못이면 지우고, 그 순간 화면을 깃허브로 보낸다
-        val misfireBtn = menuBtn("오인식", "#E68E3B5C") { reportMisfire() }
         menuStart = startBtn; menuPause = pauseBtn; menuCapture = capBtn; menuReset = resetBtn
-        menuVoice = voiceBtn; menuMode = modeBtn; menuMisfire = misfireBtn
+        menuVoice = voiceBtn; menuMode = modeBtn
         // [인식위치] — 보스를 찾는 네모(전체보스·시공보스)를 게임 화면에서 보고 옮기고 크기를 바꾼다 (v3.6)
         val zoneBtn = menuBtn("인식위치", "#E6119DA4") { toggleZoneEdit() }
         menuZone = zoneBtn
@@ -525,7 +523,6 @@ class OverlayService : Service() {
             menuBtn("위치조절", "#E616A085") { setEditing(!editing) },
             zoneBtn,
             resetBtn,
-            misfireBtn,
             modeBtn,
             voiceBtn,
             menuBtn("홈앱이동", "#E68E44AD") { openHome() },
@@ -602,7 +599,6 @@ class OverlayService : Service() {
     private var menuReset: TextView? = null
     private var menuVoice: TextView? = null
     private var menuMode: TextView? = null
-    private var menuMisfire: TextView? = null
 
     /**
      * 감시 상태에 맞게 메뉴를 바꾼다.
@@ -616,7 +612,6 @@ class OverlayService : Service() {
         menuCapture?.visibility = if (run) View.VISIBLE else View.GONE
         menuReset?.visibility = if (run) View.VISIBLE else View.GONE
         menuMode?.visibility = if (run) View.VISIBLE else View.GONE
-        menuMisfire?.visibility = if (run && Bus.activated.isNotEmpty()) View.VISIBLE else View.GONE
         // [태초] / [침공] — 지금 모드 이름이 보이고, 누르면 반대 모드로 바뀐다
         menuMode?.let { b ->
             val inv = Bus.mode == tv.gapja.monitor.core.GameMode.INVASION
@@ -711,14 +706,6 @@ class OverlayService : Service() {
         CaptureService.send(this, CaptureService.ACTION_TOGGLE_MODE)
     }
 
-    /** [오인식] 방금 인식된 보스를 지우고 그 순간 화면을 깃허브(png 저장소 misfire 폴더)로 보낸다 */
-    private fun reportMisfire() {
-        if (!Bus.running) {
-            Toast.makeText(this, "감시 중이 아닙니다", Toast.LENGTH_SHORT).show(); return
-        }
-        CaptureService.send(this, CaptureService.ACTION_MISFIRE)
-    }
-
     private fun resetBosses() {
         if (!Bus.running) {
             Toast.makeText(this, "감시 중이 아닙니다", Toast.LENGTH_SHORT).show(); return
@@ -750,7 +737,7 @@ class OverlayService : Service() {
     /** [종료] 감시와 게임 위 표시를 멈추고 앱을 닫는다 */
     private fun exitApp() {
         if (editing) setEditing(false)
-        Toast.makeText(this, "운빨보스알림을 종료합니다", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "보스알림을 종료합니다", Toast.LENGTH_SHORT).show()
         if (Bus.running) {
             CaptureService.send(this, CaptureService.ACTION_EXIT)
         } else {

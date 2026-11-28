@@ -257,39 +257,6 @@ class MainActivity : AppCompatActivity() {
 
     }
 
-    /** 깃허브 릴리스에서 새 버전을 찾아 있으면 안내 창을 띄운다 */
-    // v3.3: 앱이 오래 켜져 있어도(감시 서비스 때문에 프로세스가 안 죽는다) 화면으로 돌아올 때마다 확인한다.
-    //       너무 자주 묻지 않게 자동 확인은 10분에 한 번, [새 버전 확인] 버튼은 바로 확인한다.
-    private fun checkForUpdate(manual: Boolean = false) {
-        val now = System.currentTimeMillis()
-        if (!manual && now - lastUpdateCheckAt < 10 * 60_000L) return
-        lastUpdateCheckAt = now
-        UpdateChecker.check(this) { info ->
-            if (isFinishing || isDestroyed) return@check
-            if (info == null) {
-                if (manual) toast("지금 최신 버전(v${versionName()})이거나, 인터넷에 연결되지 않아 확인하지 못했습니다")
-                return@check
-            }
-            if (!manual && Prefs.skippedUpdate(this) == info.tag) return@check
-            val link = info.apkUrl ?: info.pageUrl
-            android.app.AlertDialog.Builder(this)
-                .setTitle("새 버전 ${info.tag} 이 나왔습니다")
-                .setMessage("지금 버전: v${versionName()}\n\n" +
-                        "[받기] 를 누르면 인터넷 창에서 이 기기에 맞는 앱(${UpdateChecker.variant()})이 내려받아집니다. " +
-                        "다 받으면 알림창이나 '다운로드' 폴더에서 파일을 눌러 설치해 주세요.")
-                .setPositiveButton("받기") { _, _ ->
-                    try {
-                        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(link)))
-                    } catch (_: Exception) {
-                        toast("인터넷 창을 열지 못했습니다")
-                    }
-                }
-                .setNegativeButton("나중에", null)
-                .setNeutralButton("이 버전은 건너뛰기") { _, _ -> Prefs.setSkippedUpdate(this, info.tag) }
-                .show()
-        }
-    }
-
     private fun versionName(): String = try {
         packageManager.getPackageInfo(packageName, 0).versionName ?: ""
     } catch (_: Exception) { "" }
@@ -371,14 +338,13 @@ class MainActivity : AppCompatActivity() {
         }, LinearLayout.LayoutParams(dp(64), dp(64)).also { it.rightMargin = dp(12) })
         val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         titleBox.addView(TextView(this).apply {
-            text = "운빨보스알림"
+            text = "보스알림"
             setTextColor(ACCENT); textSize = 22f
             setTypeface(typeface, Typeface.BOLD)
         })
         titleBox.addView(body("운빨존많겜 보스 알림 · 폰판 v${versionName()}"))
         header.addView(titleBox)
         col.addView(header)
-        col.addView(btn("🔄 새 버전 확인", "#2C3E50") { checkForUpdate(manual = true) })
 
         // ── 상태 ──
         statusView = TextView(this).apply {
@@ -818,16 +784,6 @@ class MainActivity : AppCompatActivity() {
             btn("📥 기록 가져오기", "#2980B9") { pickSeqJson.launch(arrayOf("application/json", "*/*")) },
             btn("📤 내보내기", "#16A085") { shareJson() }
         ))
-
-        // 맨 아래 작은 글자 — 눌러야만 깃허브 자동 저장 화면(열쇠 넣는 곳)이 열린다 (v2.9)
-        col.addView(TextView(this).apply {
-            text = "깃허브"
-            setTextColor(DIM); textSize = 11f
-            paintFlags = paintFlags or android.graphics.Paint.UNDERLINE_TEXT_FLAG
-            gravity = Gravity.END
-            setPadding(dp(8), dp(18), dp(8), dp(8))
-            setOnClickListener { startActivity(Intent(this@MainActivity, GitHubActivity::class.java)) }
-        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     }
 
     // ── 화면 부품 ───────────────────────────────────────────────
@@ -954,7 +910,7 @@ class MainActivity : AppCompatActivity() {
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("접근성 켜기 (확인창 없이 시작)")
             .setMessage(
-                "1. [접근성 설정 열기] → '설치된 앱' (또는 '다운로드한 앱') → '운빨보스알림' → 사용 켜기\n\n" +
+                "1. [접근성 설정 열기] → '설치된 앱' (또는 '다운로드한 앱') → '보스알림' → 사용 켜기\n\n" +
                 "2. '제한된 설정' 이라며 켜지지 않으면:\n" +
                 "   [앱 정보 열기] → 오른쪽 위 ⋮ → '제한된 설정 허용' → 다시 1번\n\n" +
                 "켜 두면 다음부터 [시작] 할 때 '화면을 공유하시겠습니까?' 창이 뜨지 않습니다. " +
@@ -1093,10 +1049,6 @@ class MainActivity : AppCompatActivity() {
         Bus.addChangeListener(changeListener)
         Bus.recordedGames = seqRepo.load().games.size
         refresh()
-        // 인터넷이 끊겨서 못 올린 사진이 있으면 다시 올린다
-        GitHubSync.flush(this)
-        // 새 버전이 나왔는지 확인한다 (10분에 한 번)
-        checkForUpdate()
     }
 
     override fun onDestroy() {
@@ -1108,8 +1060,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
-        /** 새 버전 확인은 앱을 켠 뒤 한 번만 (화면을 돌릴 때마다 다시 묻지 않게) */
-        @Volatile private var lastUpdateCheckAt = 0L
         private val BG = Color.parseColor("#FF18222C")
         private val CARD = Color.parseColor("#FF223040")
         private val ACCENT = Color.parseColor("#FF1ABC9C")

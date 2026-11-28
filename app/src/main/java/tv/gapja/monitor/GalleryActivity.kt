@@ -25,7 +25,6 @@ import kotlin.math.max
  *        태초 보스 / 침공 보스(침공_) / 로비 화면 / 배속 표시 / 보조 사진(_2)
  *
  * 보조 사진은 짧게 누르면 바로 지울 수 있다 (한 번 더 확인). (v2.8)
- * 깃허브 자동 저장이 켜져 있으면 지운 사진은 깃허브 사진 저장소에서도 지운다.
  */
 class GalleryActivity : AppCompatActivity() {
 
@@ -292,13 +291,11 @@ class GalleryActivity : AppCompatActivity() {
     private fun deleteExtra(f: File) {
         val store = TemplateStore(this)
         val name = f.name
-        val mine = name in Prefs.userTemplates(this)
-        val gh = if (mine && GitHubSync.active(this)) "\n☁️ 깃허브 사진 저장소에서도 지웁니다." else ""
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("보조 사진을 지울까요?")
             .setMessage("'${name.removeSuffix(".png")}'\n\n" +
                     "등록할 때 '${Backup.LOCATION}' 에도 한 장 남겨 두었으니, 필요하면 메인 화면 " +
-                    "[♻️ 백업에서 되살리기] 로 다시 넣을 수 있습니다." + gh)
+                    "[♻️ 백업에서 되살리기] 로 다시 넣을 수 있습니다.")
             .setPositiveButton("지우기") { _, _ ->
                 val ok = store.delete(name)
                 android.widget.Toast.makeText(this, if (ok) "보조 사진을 지웠습니다" else "지우지 못했습니다",

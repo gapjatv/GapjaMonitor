@@ -436,49 +436,4 @@ object Prefs {
     fun stopOnSecureApp(ctx: Context): Boolean = sp(ctx).getBoolean("stop_secure_app", true)
 
     fun setStopOnSecureApp(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("stop_secure_app", v).apply()
-
-    // ── 새 버전 알림 (v3.0) ──────────────────────────────────────
-
-    /** '이 버전 건너뛰기' 를 누른 버전 이름 (예: v3.1) — 그 버전은 다시 알리지 않는다 */
-    fun skippedUpdate(ctx: Context): String = sp(ctx).getString("update_skip", "") ?: ""
-
-    fun setSkippedUpdate(ctx: Context, tag: String) =
-        sp(ctx).edit().putString("update_skip", tag).apply()
-
-    // ── 깃허브 자동 저장 (v2.8) ──────────────────────────────────
-
-    /** 깃허브 열쇠(토큰) — 이 기기 안에만 저장한다. 코드에는 넣지 않는다 */
-    fun ghToken(ctx: Context): String = (sp(ctx).getString("gh_token", "") ?: "").trim()
-
-    fun setGhToken(ctx: Context, v: String) =
-        sp(ctx).edit().putString("gh_token", v.trim()).apply()
-
-    /** 등록·삭제할 때 자동으로 깃허브에 맞출지 (열쇠가 있을 때만 동작) */
-    fun ghSyncOn(ctx: Context): Boolean = sp(ctx).getBoolean("gh_sync_on", true)
-
-    fun setGhSyncOn(ctx: Context, on: Boolean) =
-        sp(ctx).edit().putBoolean("gh_sync_on", on).apply()
-
-    /** 깃허브에 맞추기를 기다리는 사진 이름들 (인터넷이 끊겨도 잊지 않게 저장해 둔다) */
-    fun ghPending(ctx: Context): Set<String> = synchronized(ghLock) {
-        sp(ctx).getStringSet("gh_pending", emptySet())?.toSet() ?: emptySet()
-    }
-
-    fun addGhPending(ctx: Context, names: Collection<String>) = synchronized(ghLock) {
-        val set = ghPending(ctx).toMutableSet(); set.addAll(names)
-        sp(ctx).edit().putStringSet("gh_pending", set).apply()
-    }
-
-    fun removeGhPending(ctx: Context, name: String) = synchronized(ghLock) {
-        val set = ghPending(ctx).toMutableSet(); set.remove(name)
-        sp(ctx).edit().putStringSet("gh_pending", set).apply()
-    }
-
-    /** 깃허브 자동 저장의 최근 결과 (메인 화면 표시용) */
-    fun ghStatus(ctx: Context): String = sp(ctx).getString("gh_status", "") ?: ""
-
-    fun setGhStatus(ctx: Context, v: String) =
-        sp(ctx).edit().putString("gh_status", v).apply()
-
-    private val ghLock = Any()
 }

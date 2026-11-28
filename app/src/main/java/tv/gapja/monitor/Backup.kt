@@ -8,7 +8,7 @@ import android.util.Log
 import java.io.File
 
 /**
- * 내가 등록한 인식용 사진을 폰 '사진첩' (Pictures/운빨보스알림) 에도 한 장씩 남긴다.
+ * 내가 등록한 인식용 사진을 폰 '사진첩' (Pictures/보스알림) 에도 한 장씩 남긴다.
  *
  *   • 사진첩(갤러리) 앱에서 바로 볼 수 있다 — 모아서 기본 사진으로 넣을 때 그대로 쓰면 된다
  *   • 앱을 지워도 남으므로, 다시 깐 뒤 메인 화면 [백업에서 되살리기] 로 한 번에 가져올 수 있다
@@ -19,7 +19,7 @@ import java.io.File
 object Backup {
 
     private const val TAG = "Backup"
-    private const val FOLDER = "운빨보스알림"
+    private const val FOLDER = "보스알림"
     private val RELATIVE = Environment.DIRECTORY_PICTURES + "/" + FOLDER + "/"
     private val RELATIVE_FULL = Environment.DIRECTORY_PICTURES + "/" + FOLDER + "/원본화면/"
 
@@ -50,7 +50,7 @@ object Backup {
         }
     }
 
-    /** 자르기 전 전체 화면을 사진첩 '운빨보스알림/원본화면' 에 남긴다 (나중에 다시 자를 때 쓴다) */
+    /** 자르기 전 전체 화면을 사진첩 '보스알림/원본화면' 에 남긴다 (나중에 다시 자를 때 쓴다) */
     fun saveFullScreen(ctx: Context, bmp: android.graphics.Bitmap, label: String) {
         try {
             val resolver = ctx.contentResolver
@@ -83,5 +83,5 @@ object Backup {
     }
 
     /** 사용자에게 보여줄 백업 위치 */
-    const val LOCATION = "사진첩 › 운빨보스알림"
+    const val LOCATION = "사진첩 › 보스알림"
 }

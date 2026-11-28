@@ -188,7 +188,6 @@ class CaptureService : Service() {
                 if (running) handlerOn().post { doExit() } else doExit()
             }
             ACTION_TOGGLE_MODE -> handlerOn().post { toggleModeByHand() }
-            ACTION_MISFIRE -> handlerOn().post { reportMisfire() }
             ACTION_MODE -> {
                 val m = GameMode.from(intent.getStringExtra(EXTRA_MODE))
                 handlerOn().post {
@@ -833,7 +832,7 @@ class CaptureService : Service() {
 
     /**
      * 게임 중 로비로 인식해서 보스를 지웠을 때, 그 순간 화면을 사진첩에 남긴다.
-     * (사진첩 › 운빨보스알림 › 원본화면 › 로비인식_…) — 오인식이면 어떤 사진이 문제인지 바로 알 수 있다.
+     * (사진첩 › 보스알림 › 원본화면 › 로비인식_…) — 오인식이면 어떤 사진이 문제인지 바로 알 수 있다.
      */
     private fun saveLobbyShot(scr: Mat, file: String, now: Long) {
         if (now - lastLobbyShotAt < 20_000) return
@@ -996,31 +995,10 @@ class CaptureService : Service() {
             if (n < BossCatalog.CONFIRM_FRAMES) return false
         }
         streak.remove(name)
-        rememberShot(name, scr, out.score)
         return activate(name, out.score, auto = true)
     }
 
-    // ── 오인식 신고 / 수동 모드 전환 (v3.0) ─────────────────────────
-
-    /** 보스가 인식된 그 순간의 화면(흑백 PNG) — [오인식] 을 누르면 이 화면을 깃허브로 보낸다 */
-    private class Shot(val png: ByteArray, val score: Double)
-    private val lastShots = LinkedHashMap<String, Shot>()
-
-    private fun rememberShot(name: String, scr: Mat, score: Double) {
-        try {
-            val buf = org.opencv.core.MatOfByte()
-            val ok = org.opencv.imgcodecs.Imgcodecs.imencode(".png", scr, buf)
-            if (ok) {
-                lastShots.remove(name)
-                lastShots[name] = Shot(buf.toArray(), score)
-                // 최근 4장만 둔다 (메모리)
-                while (lastShots.size > 4) lastShots.remove(lastShots.keys.first())
-            }
-            buf.release()
-        } catch (e: Throwable) {
-            Log.w(TAG, "인식 화면 보관 실패", e)
-        }
-    }
+    // ── 수동 모드 전환 (v3.0) ─────────────────────────
 
     /**
      * [태초/침공] 모드를 손으로 바꾼다. (v3.1 — 보스 사진은 초기화하지 않고 모드만 바꾼다)
@@ -1040,48 +1018,6 @@ class CaptureService : Service() {
         Bus.notice("${newMode.label}모드로 바꿨습니다.")
         lastActiveAt = System.currentTimeMillis()
         Bus.onState(session, seq)
-    }
-
-    /**
-     * [오인식] 방금 인식된 보스가 잘못 잡힌 것일 때 —
-     *   ① 그 보스를 목록에서 지우고(60초 동안 다시 안 잡음) ② 인식된 순간의 화면을 사진첩에 남기고
-     *   ③ 깃허브 열쇠가 있으면 png 저장소 misfire/ 폴더로 올린다. (어떤 사진이 문제인지 나중에 확인용)
-     */
-    private fun reportMisfire() {
-        val name = session.activationOrder.lastOrNull()
-        if (name == null) {
-            Bus.notice("신고할 보스가 없습니다."); return
-        }
-        val mode = session.mode
-        val shot = lastShots.remove(name)
-        session.undoLast(System.currentTimeMillis(), MISFIRE_COOLDOWN_SEC)
-        streak.remove(name)
-        remainSeq++
-        Bus.onState(session, seq)
-
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.KOREA).format(Date())
-        val pctInt = shot?.let { (it.score * 100).toInt() } ?: 0
-        val fileName = "${name}_${mode.label}_${pctInt}_$stamp.png"
-        val sent = shot != null && GitHubSync.active(this)
-        Bus.log("🚩 [오인식 신고] '$name' (${mode.label}) 를 지웠습니다. " +
-                (if (shot == null) "(인식 순간 화면이 없어 사진은 남기지 못했습니다)"
-                 else if (sent) "화면을 깃허브 misfire/${GitHubSync.folder()} 폴더로 보냅니다."
-                 else "깃허브 열쇠가 없어 화면은 사진첩에만 남깁니다.") +
-                " ${MISFIRE_COOLDOWN_SEC.toInt()}초 동안은 이 보스를 다시 잡지 않습니다.")
-        Bus.notice("'$name' 오인식으로 지웠습니다." + if (sent) " (사진 전송)" else "")
-        lastActiveAt = System.currentTimeMillis()
-        if (shot != null) {
-            Thread {
-                try {
-                    val bmp = android.graphics.BitmapFactory.decodeByteArray(shot.png, 0, shot.png.size)
-                    if (bmp != null) {
-                        Backup.saveFullScreen(this, bmp, "오인식_${name}")
-                        bmp.recycle()
-                    }
-                } catch (_: Throwable) {}
-            }.start()
-            if (sent) GitHubSync.uploadMisfire(this, fileName, shot.png)
-        }
     }
 
     // ── 보스 활성화 / 안내 ────────────────────────────────────────
@@ -1288,7 +1224,6 @@ class CaptureService : Service() {
         }
         session.reset()
         streak.clear()
-        lastShots.clear()
         // 진행 중이던 경보 타이머·대기 중인 안내도 함께 비운다 (PC reset_game 과 같다)
         gameGen++
         warns.clear()
@@ -1346,7 +1281,7 @@ class CaptureService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return Notification.Builder(this, CH_ID)
-            .setContentTitle("운빨보스알림")
+            .setContentTitle("보스알림")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_view)
             .setContentIntent(open)
@@ -1387,8 +1322,6 @@ class CaptureService : Service() {
         const val ACTION_MODE = "tv.gapja.monitor.MODE"
         /** [보스설정 → 태초/침공] 모드를 손으로 바꾼다 (로비 인식이 안 됐을 때) */
         const val ACTION_TOGGLE_MODE = "tv.gapja.monitor.TOGGLE_MODE"
-        /** [보스설정 → 오인식] 방금 인식된 보스를 지우고 그 순간 화면을 깃허브로 보낸다 */
-        const val ACTION_MISFIRE = "tv.gapja.monitor.MISFIRE"
         const val EXTRA_CODE = "code"
         const val EXTRA_DATA = "data"
         const val EXTRA_MODE = "mode"
@@ -1450,8 +1383,6 @@ class CaptureService : Service() {
         /** 로비로 초기화한 뒤 쉬는 시간 (PC: 2초) */
         private const val LOBBY_QUIET_MS = 2000L
 
-        /** [오인식] 으로 지운 보스를 다시 잡지 않는 시간(초) */
-        private const val MISFIRE_COOLDOWN_SEC = 60.0
         /** 배속 검사 간격 */
         private const val SPEED_CHECK_MS = 600L
         /** 경보 타이머 간격 (PC: 0.5초) */

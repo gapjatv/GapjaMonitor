@@ -9,7 +9,8 @@ android {
 
     defaultConfig {
         // 설치되는 앱 이름표 (스토어·설정 화면에 보이는 값). 코드 폴더 이름(namespace)과는 따로다.
-        applicationId = "com.unbbal.bossalarm"
+        // 배포용 — 개인용 앱(com.unbbal.bossalarm)과 따로 설치된다.
+        applicationId = "com.bossalarm.app"
         // 화면 캡처(MediaProjection)와 포그라운드 서비스 타입이 필요하므로 최소 29.
         minSdk = 29
         targetSdk = 35
@@ -90,7 +91,4 @@ dependencies {
     //    README 의 '② OpenCV 를 직접 넣는 방법' 을 따르세요.
     // ───────────────────────────────────────────────────────────────
     implementation("org.opencv:opencv:4.10.0")
-
-    // 깃허브 자동 저장 (v2.8) — 사진 올리기·지우기 (지우기 요청에 내용을 실어 보내야 해서 OkHttp 를 쓴다)
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

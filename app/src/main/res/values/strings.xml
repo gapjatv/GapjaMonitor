@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">운빨보스알림</string>
+    <string name="app_name">보스알림</string>
     <string name="a11y_summary">확인창 없이 게임 화면의 보스를 인식합니다</string>
     <string name="a11y_desc">운빨존많겜 화면에 나온 보스를 알려 주기 위해 화면을 짧은 간격으로 찍어서 폰 안에서만 비교합니다. 게임 창이 어느 화면(뮤뮤플레이어 탭 등)에 있는지 찾기 위해 창 목록을 확인합니다. 찍은 화면은 어디로도 보내거나 저장하지 않고, 다른 앱을 조작하지 않습니다. 켜 두면 [시작] 할 때 \'화면을 공유하시겠습니까?\' 확인창이 뜨지 않습니다.</string>
 </resources>

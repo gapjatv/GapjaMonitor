@@ -171,7 +171,6 @@ class TemplateStore(private val ctx: Context) {
         b.copyTo(cur, overwrite = true)
         if (tmp.exists()) tmp.renameTo(b) else b.delete()
         cache.clear(); generation++
-        GitHubSync.syncFile(ctx, name)
         true
     } catch (_: Exception) { false }
 
@@ -182,7 +181,6 @@ class TemplateStore(private val ctx: Context) {
         ctx.assets.open(path).use { ins -> File(dir, name).outputStream().use { ins.copyTo(it) } }
         Prefs.removeUserTemplate(ctx, name)
         cache.clear(); generation++
-        GitHubSync.syncFile(ctx, name)     // 내 사진이 아니게 됐으니 깃허브에서도 지운다
         true
     } catch (_: Exception) { false }
 
@@ -192,7 +190,6 @@ class TemplateStore(private val ctx: Context) {
         val ok = File(dir, name).delete()
         Prefs.removeUserTemplate(ctx, name)
         cache.clear(); generation++
-        GitHubSync.syncFile(ctx, name)     // 깃허브에서도 지운다 (깃허브 기록에는 남아서 되살릴 수 있다)
         ok
     } catch (_: Exception) { false }
 
@@ -305,8 +302,6 @@ class TemplateStore(private val ctx: Context) {
             Backup.saveCopy(ctx, f)
             cache.clear()
             generation++
-            // 깃허브 사진 저장소에도 올린다 (열쇠가 있고 자동 저장이 켜져 있을 때만)
-            GitHubSync.syncFiles(ctx, listOf(name) + removed)
             name
         } catch (e: Exception) {
             Log.w(TAG, "저장 실패: $name", e); null
@@ -345,7 +340,6 @@ class TemplateStore(private val ctx: Context) {
         }
         cache.clear()
         generation++
-        GitHubSync.syncFiles(ctx, imported)
         return ok to skipped
     }
 
