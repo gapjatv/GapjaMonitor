@@ -436,4 +436,12 @@ object Prefs {
     fun stopOnSecureApp(ctx: Context): Boolean = sp(ctx).getBoolean("stop_secure_app", true)
 
     fun setStopOnSecureApp(ctx: Context, v: Boolean) = sp(ctx).edit().putBoolean("stop_secure_app", v).apply()
+
+    // ── 새 버전 알림 ──────────────────────────────────────
+
+    /** '이 버전 건너뛰기' 를 누른 버전 이름 (예: v1.1) — 그 버전은 다시 알리지 않는다 */
+    fun skippedUpdate(ctx: Context): String = sp(ctx).getString("update_skip", "") ?: ""
+
+    fun setSkippedUpdate(ctx: Context, tag: String) =
+        sp(ctx).edit().putString("update_skip", tag).apply()
 }

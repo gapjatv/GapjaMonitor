@@ -51,8 +51,8 @@ class GalleryActivity : AppCompatActivity() {
         val store = TemplateStore(this)
         col.addView(TextView(this).apply {
             text = "각 칸에는 지금 인식에 실제로 쓰이는 사진 한 장만 보여 줍니다.\n" +
-                    "• ✔ 내 사진 — 내가 직접 등록한 사진 (있으면 앱 기본 사진보다 우선합니다)\n" +
-                    "• 기본 사진 — 앱에 처음부터 들어 있는 사진 (등록하지 않아도 이 사진으로 인식합니다)\n" +
+                    "• ✔ 내 사진 — 내가 직접 등록한 사진\n" +
+                    "• 기본 사진 — 앱에 들어 있는 로비·배속 화면 사진 (보스 사진은 직접 등록해야 인식합니다)\n" +
                     "• ＋ 등록 필요 — 아직 사진이 없는 칸입니다. 눌러서 등록 방법을 확인하세요."
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
             setPadding(0, dp(6), 0, 0)
@@ -117,7 +117,9 @@ class GalleryActivity : AppCompatActivity() {
 
         val disp = (File(filesDir, "display").listFiles { f -> f.name.lowercase().endsWith(".png") } ?: emptyArray())
             .sortedBy { it.name }
-        section(col, "게임 위에 뜨는 기본 보스 사진", disp, null, round = true)
+        section(col, "게임 위에 뜨는 보스 사진 (보스를 등록하면 자동으로 만들어집니다)", disp,
+            "아직 없습니다. 인식용 보스 사진을 등록하면 같은 사진으로 자동 등록됩니다. 등록하기 전에는 흰 동그라미로 보입니다.",
+            round = true)
     }
 
     private data class Cell(val label: String, val file: File?, val mine: Boolean)

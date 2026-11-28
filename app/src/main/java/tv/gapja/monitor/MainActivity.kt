@@ -239,7 +239,7 @@ class MainActivity : AppCompatActivity() {
         UiInsets.apply(root)
 
         if (installed > 0) {
-            Bus.log("📦 기본 자료 ${installed}개를 준비했습니다. (보스 사진 · 인식용 사진 · 음성)")
+            Bus.log("📦 기본 자료 ${installed}개를 준비했습니다. (로비·배속 화면 · 음성)")
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -252,9 +252,43 @@ class MainActivity : AppCompatActivity() {
         Bus.recordedGames = seqRepo.load().games.size
         refresh()
 
-        // 처음 켤 때 한 번 — PC 사진을 그대로 쓸지, 폰에서 새로 등록할지 묻는다
+        // 처음 켤 때 한 번 — 인식 기준(기본 / 엄격)을 묻는다
         if (!Prefs.templateSourceAsked(this)) askTemplateSource()
 
+    }
+
+
+    /** 깃허브 릴리스에서 새 버전을 찾아 있으면 안내 창을 띄운다 */
+    // v3.3: 앱이 오래 켜져 있어도(감시 서비스 때문에 프로세스가 안 죽는다) 화면으로 돌아올 때마다 확인한다.
+    //       너무 자주 묻지 않게 자동 확인은 10분에 한 번, [새 버전 확인] 버튼은 바로 확인한다.
+    private fun checkForUpdate(manual: Boolean = false) {
+        val now = System.currentTimeMillis()
+        if (!manual && now - lastUpdateCheckAt < 10 * 60_000L) return
+        lastUpdateCheckAt = now
+        UpdateChecker.check(this) { info ->
+            if (isFinishing || isDestroyed) return@check
+            if (info == null) {
+                if (manual) toast("지금 최신 버전(v${versionName()})이거나, 인터넷에 연결되지 않아 확인하지 못했습니다")
+                return@check
+            }
+            if (!manual && Prefs.skippedUpdate(this) == info.tag) return@check
+            val link = info.apkUrl ?: info.pageUrl
+            android.app.AlertDialog.Builder(this)
+                .setTitle("새 버전 ${info.tag} 이 나왔습니다")
+                .setMessage("지금 버전: v${versionName()}\n\n" +
+                        "[받기] 를 누르면 인터넷 창에서 이 기기에 맞는 앱(${UpdateChecker.variant()})이 내려받아집니다. " +
+                        "다 받으면 알림창이나 '다운로드' 폴더에서 파일을 눌러 설치해 주세요.")
+                .setPositiveButton("받기") { _, _ ->
+                    try {
+                        startActivity(Intent(Intent.ACTION_VIEW, android.net.Uri.parse(link)))
+                    } catch (_: Exception) {
+                        toast("인터넷 창을 열지 못했습니다")
+                    }
+                }
+                .setNegativeButton("나중에", null)
+                .setNeutralButton("이 버전은 건너뛰기") { _, _ -> Prefs.setSkippedUpdate(this, info.tag) }
+                .show()
+        }
     }
 
     private fun versionName(): String = try {
@@ -262,33 +296,33 @@ class MainActivity : AppCompatActivity() {
     } catch (_: Exception) { "" }
 
     /**
-     * 인식용 사진을 어떻게 쓸지 고른다.
-     *   • PC 사진 그대로: 앱에 넣어 둔 PC 캡처를 쓴다. 바로 쓸 수 있지만 폰 화면과 달라 덜 맞을 수 있다.
-     *   • 폰에서 새로 등록: 내가 폰에서 캡처한 사진만 쓴다. 처음에 등록하는 수고가 있지만 인식이 가장 정확하다.
+     * 인식 기준을 고른다. (배포용: 보스 사진은 모두 직접 등록한다)
+     *   • 기본 기준: 모든 사진을 같은 기준(보통 60%)으로 비교한다.
+     *   • 엄격한 기준: 내가 등록한 사진을 더 엄격한 기준(72%)으로 비교해서 엉뚱한 곳에 덜 걸린다.
      */
     private fun askTemplateSource() {
         val usingDefault = Prefs.usePcTemplates(this)
         val mine = Prefs.userTemplates(this).size
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("인식용 보스 사진을 어떻게 할까요?")
+            .setTitle("인식 기준을 어떻게 할까요?")
             .setMessage(
-                "어느 쪽을 골라도 처음에는 앱에 들어 있는 기본 사진으로 바로 인식합니다. " +
-                "그러다 보스마다 내가 직접 캡처해 등록하면, 그 보스만 내 사진으로 바뀝니다. " +
-                "기본 사진으로 잘 인식되는 보스는 굳이 등록하지 않아도 됩니다.\n\n" +
-                "• 기본 사진 그대로 (추천): 모든 사진을 같은 기준(보통 60%)으로 비교합니다.\n\n" +
-                "• 직접 새로 등록: 내가 찍은 사진과 이 기기용 사진은 더 엄격한 기준(72%)으로 비교해서 엉뚱한 곳에 덜 걸립니다. " +
-                "앱 기본(PC) 사진을 쓰는 보스는 보통 기준을 씁니다. 지금 등록된 내 사진: ${mine}장\n\n" +
-                "언제든 메인 화면 '인식용 사진' 에서 바꿀 수 있습니다." +
-                if (Prefs.templateSourceAsked(this)) "\n\n(지금: ${if (usingDefault) "기본 사진 그대로" else "직접 새로 등록"})" else ""
+                "보스 인식용 사진은 직접 캡처해서 등록합니다. 보스를 등록하면 게임 위에 뜨는 동그란 알림 사진도 " +
+                "같은 사진으로 자동 등록됩니다.\n\n" +
+                "• 기본 기준 (추천): 모든 사진을 같은 기준(보통 60%)으로 비교합니다.\n\n" +
+                "• 엄격한 기준: 내가 등록한 사진을 더 엄격한 기준(72%)으로 비교해서 엉뚱한 곳에 덜 걸립니다. " +
+                "지금 등록된 내 사진: ${mine}장\n\n" +
+                "언제든 메인 화면 '인식 기준' 에서 바꿀 수 있습니다." +
+                if (Prefs.templateSourceAsked(this)) "\n\n(지금: ${if (usingDefault) "기본 기준" else "엄격한 기준"})" else ""
             )
-            .setPositiveButton("기본 사진 그대로") { _, _ ->
+            .setPositiveButton("기본 기준") { _, _ ->
                 Prefs.setUsePcTemplates(this, true)
-                Bus.log("🧩 [인식용 사진] 기본 사진으로 인식합니다. (직접 캡처한 사진도 함께 씁니다)")
+                Bus.log("🧩 [인식 기준] 기본 기준(보통 60%)으로 비교합니다.")
                 refresh()
+                if (Prefs.userTemplates(this).isEmpty()) showRegisterGuide()
             }
-            .setNegativeButton("직접 새로 등록") { _, _ ->
+            .setNegativeButton("엄격한 기준") { _, _ ->
                 Prefs.setUsePcTemplates(this, false)
-                Bus.log("🆕 [인식용 사진] 내가 등록한 사진은 엄격한 기준으로 씁니다. 등록 안 한 보스는 기본 사진으로 인식합니다.")
+                Bus.log("🆕 [인식 기준] 내가 등록한 사진은 엄격한 기준(72%)으로 비교합니다.")
                 refresh()
                 if (Prefs.userTemplates(this).isEmpty()) showRegisterGuide()
             }
@@ -301,6 +335,8 @@ class MainActivity : AppCompatActivity() {
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("보스 사진 등록하는 법")
             .setMessage(
+                "처음에는 등록된 보스 사진이 없어서, 보스마다 직접 등록해야 인식됩니다. " +
+                "등록하면 게임 위에 뜨는 동그란 알림 사진도 자동으로 만들어지고, 등록 전에는 흰 동그라미로 보입니다.\n\n" +
                 "1. [시작] 을 누르고 게임을 켭니다.\n" +
                 "2. 보스가 나오면 게임 위 [보스설정 → 보스캡처] 를 누릅니다.\n" +
                 "3. 두 손가락으로 확대해서 주황 네모로 보스만 감싸고, 보스 이름을 고른 뒤 [저장].\n" +
@@ -327,13 +363,13 @@ class MainActivity : AppCompatActivity() {
             UiInsets.contentWidth(this), FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER_HORIZONTAL))
         outer.addView(frame)
 
-        // ── 제목 (갑자 캐릭터 + 이름) ──
+        // ── 제목 (아이콘 + 이름) ──
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
         header.addView(ImageView(this).apply {
-            setImageResource(R.drawable.gapja_logo)
+            setImageResource(R.drawable.app_logo)
             scaleType = ImageView.ScaleType.FIT_CENTER
         }, LinearLayout.LayoutParams(dp(64), dp(64)).also { it.rightMargin = dp(12) })
         val titleBox = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
@@ -345,6 +381,7 @@ class MainActivity : AppCompatActivity() {
         titleBox.addView(body("운빨존많겜 보스 알림 · 폰판 v${versionName()}"))
         header.addView(titleBox)
         col.addView(header)
+        col.addView(btn("🔄 새 버전 확인", "#2C3E50") { checkForUpdate(manual = true) })
 
         // ── 상태 ──
         statusView = TextView(this).apply {
@@ -529,8 +566,8 @@ class MainActivity : AppCompatActivity() {
         // ── 보스 위험 경보 ──
         buildWarnings(col)
 
-        // ── 인식용 사진: PC 사진 / 새로 등록 ──
-        col.addView(h("인식용 사진"))
+        // ── 인식 기준: 기본 / 엄격 ──
+        col.addView(h("인식 기준"))
         sourceView = TextView(this).apply {
             setTextColor(Color.WHITE); textSize = 13f
             setPadding(dp(12), dp(10), dp(12), dp(10))
@@ -953,8 +990,8 @@ class MainActivity : AppCompatActivity() {
         val m = GameMode.from(Prefs.mode(this))
         val targets = BossCatalog.watchList(m) + PcDefaults.lobbiesFor(m)
         val done = targets.count { templates.hasUserShot(it, m) }
-        sourceView?.text = (if (usePc) "🧩 기본 사진 그대로 — 내가 등록한 보스만 내 사진으로 바뀜\n"
-                else "🆕 직접 새로 등록 — 내 사진은 엄격한 기준, 등록 안 한 보스는 기본 사진\n") +
+        sourceView?.text = (if (usePc) "🧩 기본 기준 — 모든 사진을 같은 기준으로 비교\n"
+                else "🆕 엄격한 기준 — 내가 등록한 사진을 더 엄격하게 비교\n") +
                 "내가 등록한 사진: ${Prefs.userTemplates(this).size}장 · ${m.label} 등록 현황 $done/${targets.size}"
         val a11y = Prefs.useA11y(this)
         val a11yOn = BossA11yService.isOn(this)
@@ -977,7 +1014,7 @@ class MainActivity : AppCompatActivity() {
         addBtn?.text = if (gal) "📷 사진 추가 — 사진첩에서 스크린샷 골라 보스·로비 잘라 넣기"
         else "📁 사진 추가 — 파일에서 잘라 둔 PNG 가져오기"
         addWhereBtn?.text = "가져올 곳: ${if (gal) "사진첩 (기본)" else "파일"}  · 눌러서 바꾸기"
-        sourceBtn?.text = if (usePc) "🆕 '직접 새로 등록' 방식으로 바꾸기" else "🧩 '기본 사진 그대로' 방식으로 바꾸기"
+        sourceBtn?.text = if (usePc) "🆕 '엄격한 기준' 으로 바꾸기" else "🧩 '기본 기준' 으로 바꾸기"
         // 로비 인식으로 서비스가 모드를 바꿨을 수 있으니 저장된 값을 다시 읽는다
         mode = GameMode.from(Prefs.mode(this))
         modeBtn?.let { b ->
@@ -1049,6 +1086,8 @@ class MainActivity : AppCompatActivity() {
         Bus.addChangeListener(changeListener)
         Bus.recordedGames = seqRepo.load().games.size
         refresh()
+        // 새 버전이 나왔는지 확인한다 (10분에 한 번)
+        checkForUpdate()
     }
 
     override fun onDestroy() {
@@ -1060,6 +1099,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        /** 새 버전 확인은 10분에 한 번만 (화면을 돌릴 때마다 다시 묻지 않게) */
+        @Volatile private var lastUpdateCheckAt = 0L
         private val BG = Color.parseColor("#FF18222C")
         private val CARD = Color.parseColor("#FF223040")
         private val ACCENT = Color.parseColor("#FF1ABC9C")

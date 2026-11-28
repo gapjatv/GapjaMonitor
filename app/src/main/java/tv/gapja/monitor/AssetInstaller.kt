@@ -9,7 +9,7 @@ import kotlin.math.max
  * 앱에 같이 넣어 둔 기본 자료를 앱 저장소로 풀어 놓는다.
  *
  *   assets/templates/ → templates/  인식용 캡처 사진 (PC '캡쳐된 보스 사진')
- *   assets/display/   → display/    게임 위에 띄울 보스 사진 (PC 'ui_images')
+ *   assets/display/   → display/    (배포용: 비어 있음 — 알림용 보스 사진은 사용자가 보스를 등록할 때 자동으로 만들어진다)
  *   assets/voices/    → voices/     보스 음성·80R 멘트·경보 멘트 MP3 (PC 'voices')
  *   assets/alarms/    → alarms/     위험 경보음 MP3 (PC 'sounds/{보스}.mp3')
  *

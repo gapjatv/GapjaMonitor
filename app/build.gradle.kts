@@ -14,8 +14,8 @@ android {
         // 화면 캡처(MediaProjection)와 포그라운드 서비스 타입이 필요하므로 최소 29.
         minSdk = 29
         targetSdk = 35
-        versionCode = 28
-        versionName = "3.7"
+        versionCode = 1
+        versionName = "1.0"
 
         // 어떤 ABI 를 담을지는 아래 splits 에서 정한다 (기기 종류별 APK)
     }
@@ -91,4 +91,7 @@ dependencies {
     //    README 의 '② OpenCV 를 직접 넣는 방법' 을 따르세요.
     // ───────────────────────────────────────────────────────────────
     implementation("org.opencv:opencv:4.10.0")
+
+    // 새 버전 알림 — 깃허브 릴리스 목록 읽기
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 }

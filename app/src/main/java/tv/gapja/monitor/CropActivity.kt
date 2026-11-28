@@ -39,6 +39,8 @@ import kotlin.math.min
  *   • 보스마다 기본 1장 + 보조 1장까지 (v2.8)
  *   • 처음 등록: {보스}.png (침공이면 침공_{보스}.png)
  *   • 두 번째부터: 보조 사진 {보스}_2.png — 이미 보조 사진이 있으면 지우고 새 사진으로 바꾼다 (기본 사진은 그대로)
+ *   • (배포용) 보스를 등록하면 같은 사진으로 게임 위에 뜨는 알림용 보스 사진도 자동으로 만든다 —
+ *     보스 윤곽만 따서 가운데에 맞춘다 (DisplayPhoto). 인식용 사진은 자른 그대로 저장한다.
  *
  * 이 화면에서 바로 [태초]/[침공] 을 고를 수 있다. 고른 모드에 맞는 보스와
  * 로비 화면(태초: 태초로비·공통로비 / 침공: 침공로비·공통로비)이 목록에 나온다.
@@ -190,6 +192,7 @@ class CropActivity : AppCompatActivity() {
             setTextColor(Color.parseColor("#FF8C9BA6")); textSize = 12f
             text = "보스(로비)를 고르고 [등록] 을 누르세요. 보스마다 기본 1장 + 보조 1장까지 등록되고, " +
                     "더 등록하면 보조 사진이 새 사진으로 바뀝니다. (기본 사진은 그대로)\n" +
+                    "• 보스를 등록하면 게임 위에 뜨는 동그란 알림 사진도 같은 사진으로 자동 등록됩니다. (보스 윤곽만 따서 가운데에 맞춰요 — 인식용 사진은 자른 그대로 저장됩니다)\n" +
                     "• 공통로비1·2·3: 판이 끝난 '종료!' 화면 등 3가지 — 칸마다 따로 등록합니다.\n" +
                     "• 1배속상태·2배속상태: 화면의 배속 표시(자동 인식용) — '배속 자동 인식' 을 켰을 때만 쓰입니다. 태초/침공을 따로 등록하세요.\n" +
                     "• 📐 인식위치(맨 아래): 사진이 아니라 '보스가 나오는 자리'를 등록합니다. 전체보스(태초·침공 일반 보스) · 시공보스(침공 특수보스 3종) 두 곳이고, " +
@@ -352,14 +355,20 @@ class CropActivity : AppCompatActivity() {
             asExtra -> "\n(기본 사진은 그대로 두고 보조 사진으로 추가합니다)"
             else -> ""
         }
+        val alsoDisplay = if (isBossTarget(boss))
+            "\n🖼 게임 위에 뜨는 동그란 보스 사진도 이 사진으로 자동 등록합니다. (보스 윤곽만 따서 가운데에 맞춥니다)" else ""
         // 물어보는 것은 한 번만: 등록 / 취소
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("등록할까요?")
-            .setMessage("'$what' 사진으로 등록합니다." + how)
+            .setMessage("'$what' 사진으로 등록합니다." + how + alsoDisplay)
             .setPositiveButton("등록") { _, _ -> doSave(crop, boss, asExtra) }
             .setNegativeButton("취소", null)
             .show()
     }
+
+    /** 보스(알림용 사진이 필요한 항목)인지 — 로비·공통로비·배속 표시는 아니다 */
+    private fun isBossTarget(name: String): Boolean =
+        !PcDefaults.isLobby(name) && !PcDefaults.isCommonSlot(name) && !PcDefaults.isSpeedShot(name)
 
     /** 인식위치 등록 — 사진 대신 네모의 위치(화면 비율)만 저장한다 */
     private fun saveZone(zone: String) {
@@ -398,6 +407,17 @@ class CropActivity : AppCompatActivity() {
             return
         }
         rememberBox(boss)
+        // 같은 사진으로 알림용 보스 사진도 만든다 (윤곽 따기는 조금 걸려서 뒤에서 한다)
+        if (isBossTarget(boss)) {
+            val app = applicationContext
+            val copy = try { crop.copy(Bitmap.Config.ARGB_8888, false) } catch (_: Throwable) { null }
+            if (copy != null) Thread {
+                val ok = DisplayPhoto.saveFor(app, boss, copy)
+                try { copy.recycle() } catch (_: Throwable) {}
+                Bus.log(if (ok) "🖼 [알림 사진 등록] '$boss' — 게임 위에 뜨는 보스 사진을 자동으로 만들었습니다."
+                        else "⚠️ [알림 사진] '$boss' 알림용 사진을 만들지 못했습니다. (인식용 사진은 정상 등록됨)")
+            }.start()
+        }
         Bus.log("✂️ [사진 등록] '$name' 저장 (${crop.width}×${crop.height}, ${mode.label}) — 바로 인식에 쓰입니다. " +
                 "사진첩 › 보스알림 에도 넣었습니다.")
         val snapPath = intent.getStringExtra(EXTRA_PATH)
