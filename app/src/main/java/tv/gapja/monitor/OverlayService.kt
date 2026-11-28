@@ -517,7 +517,7 @@ class OverlayService : Service() {
         val misfireBtn = menuBtn("오인식", "#E68E3B5C") { reportMisfire() }
         menuStart = startBtn; menuPause = pauseBtn; menuCapture = capBtn; menuReset = resetBtn
         menuVoice = voiceBtn; menuMode = modeBtn; menuMisfire = misfireBtn
-        // [인식위치] — 보스를 찾는 네모(태초보스·침공보스·시공보스)를 게임 화면에서 보고 옮기고 크기를 바꾼다 (v3.6)
+        // [인식위치] — 보스를 찾는 네모(전체보스·시공보스)를 게임 화면에서 보고 옮기고 크기를 바꾼다 (v3.6)
         val zoneBtn = menuBtn("인식위치", "#E6119DA4") { toggleZoneEdit() }
         menuZone = zoneBtn
         val items = listOf(

@@ -339,19 +339,21 @@ object Prefs {
         sp(ctx).edit().putStringSet("user_tpls", set).apply()
     }
 
-    /** 보스 사진 줄 터치 통과 — 켜면 사진 위를 눌러도 게임이 눌리고(사진 고정), 끄면 사진을 끌어서 옮길 수 있다 */
-    fun stripPassThrough(ctx: Context): Boolean = sp(ctx).getBoolean("strip_pass", false)
+    /**
+     * 보스 사진 줄 터치 통과 — 켜면 사진 위를 눌러도 게임이 눌리고(사진 고정), 끄면 사진을 끌어서 옮길 수 있다.
+     * v3.7: 처음 값은 켬 (직접 바꾼 적이 있으면 그 값을 그대로 쓴다)
+     */
+    fun stripPassThrough(ctx: Context): Boolean = sp(ctx).getBoolean("strip_pass", true)
 
     fun setStripPassThrough(ctx: Context, on: Boolean) =
         sp(ctx).edit().putBoolean("strip_pass", on).apply()
 
     /**
      * 인식 방식 — true 면 접근성(확인창 없음), false 면 화면 공유(빠름, 시작할 때 확인창).
-     * 처음 값: 뮤뮤플레이어 같은 PC 앱플레이어(x86_64)는 접근성, 폰은 화면 공유.
+     * v3.7: 처음 값은 폰·뮤뮤 모두 접근성 (안드로이드 11 이상일 때). 직접 바꾼 적이 있으면 그 값을 그대로 쓴다.
      */
     fun useA11y(ctx: Context): Boolean = sp(ctx).getBoolean("use_a11y",
-        android.os.Build.SUPPORTED_ABIS.firstOrNull()?.startsWith("x86") == true &&
-            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
+        android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.R)
 
     fun setUseA11y(ctx: Context, on: Boolean) = sp(ctx).edit().putBoolean("use_a11y", on).apply()
 

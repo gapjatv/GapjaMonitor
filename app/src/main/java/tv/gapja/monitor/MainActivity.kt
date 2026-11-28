@@ -498,7 +498,7 @@ class MainActivity : AppCompatActivity() {
         col.addView(check("자동 축소  (끄면 정한 크기 그대로 · 넘치면 다음 줄로 · 기본 끔)", Prefs.autoShrink(this)) {
             Prefs.setAutoShrink(this, it); Bus.settingsChanged()
         })
-        col.addView(check("사진 터치 통과  (켜면 사진 위도 게임이 눌림 · 끄면 사진을 손가락으로 끌어 옮김)",
+        col.addView(check("사진 터치 통과  (켜면 사진 위도 게임이 눌림 · 끄면 사진을 손가락으로 끌어 옮김 · 처음엔 켬)",
             Prefs.stripPassThrough(this)) {
             Prefs.setStripPassThrough(this, it); Bus.settingsChanged()
         })

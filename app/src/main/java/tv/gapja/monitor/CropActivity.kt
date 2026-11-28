@@ -193,8 +193,8 @@ class CropActivity : AppCompatActivity() {
                     "더 등록하면 보조 사진이 새 사진으로 바뀝니다. (기본 사진은 그대로)\n" +
                     "• 공통로비1·2·3: 판이 끝난 '종료!' 화면 등 3가지 — 칸마다 따로 등록합니다.\n" +
                     "• 1배속상태·2배속상태: 화면의 배속 표시(자동 인식용) — '배속 자동 인식' 을 켰을 때만 쓰입니다. 태초/침공을 따로 등록하세요.\n" +
-                    "• 📐 인식위치(맨 아래): 사진이 아니라 '보스가 나오는 자리'를 등록합니다. 태초보스 · 침공보스 · 시공보스(침공 특수보스 3종) 세 곳이고, " +
-                    "보스는 등록한 위치 안에서만 인식합니다. 보스 그림보다 넉넉하게 감싸 주세요. (로비·배속은 전체 화면에서 찾습니다)"
+                    "• 📐 인식위치(맨 아래): 사진이 아니라 '보스가 나오는 자리'를 등록합니다. 전체보스(태초·침공 일반 보스) · 시공보스(침공 특수보스 3종) 두 곳이고, " +
+                    "보스는 이 위치 안에서만 인식합니다. 처음 설치하면 내 기기용 기본 위치가 이미 잡혀 있으니, 안 맞을 때만 바꾸세요. 보스 그림보다 넉넉하게 감싸 주세요. (로비·배속은 전체 화면에서 찾습니다)"
             setPadding(0, dp(6), 0, 0)
         }
         col.addView(saveInfo)
@@ -238,14 +238,14 @@ class CropActivity : AppCompatActivity() {
         boxKind = key
         val zone = WatchZones.zoneOf(bossSpinner.selectedItem as? String)
         if (zone != null) {
-            // 인식위치 — 등록해 둔 위치가 있으면 그 자리(마지막 설정), 없으면 기본 자리에서 시작.
+            // 인식위치 — 저장해 둔 위치가 있으면 그 자리(마지막 설정), 없으면 내 기기 기본 자리에서 시작.
             // 다른 인식위치도 색을 달리해서 함께 보여 준다.
             val src = source
             val land = src != null && src.width > src.height
             val r = WatchZones.current(this, zone, land)
             cropView.setAccent(WatchZones.color(zone), zone)
             cropView.setOutlines(WatchZones.ALL.filter { it != zone }.mapNotNull { z ->
-                WatchZones.saved(this, z, land)?.let { v ->
+                WatchZones.effective(this, z, land)?.let { v ->
                     CropView.ZoneOutline(z, WatchZones.color(z), RectF(v[0], v[1], v[2], v[3]))
                 }
             })
@@ -369,7 +369,7 @@ class CropActivity : AppCompatActivity() {
         val had = WatchZones.isRegistered(this, zone)
         val b = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("인식위치로 등록할까요?")
-            .setMessage("'$zone' 인식위치로 이 네모 자리를 등록합니다.\n" +
+            .setMessage("'$zone' 인식위치로 이 네모 자리를 저장합니다.\n" +
                     "감시할 때 보스는 이 안에서만 찾습니다. 앱을 다시 켜거나 새 버전을 받아도 그대로 남습니다.\n" +
                     "(보스가 이 네모 밖에 나오면 인식하지 못하니 넉넉하게 잡아 주세요)")
             .setPositiveButton("등록") { _, _ ->
@@ -383,10 +383,10 @@ class CropActivity : AppCompatActivity() {
             }
             .setNegativeButton("취소", null)
         if (had) {
-            b.setNeutralButton("위치 지우기") { _, _ ->
+            b.setNeutralButton("기본 위치로") { _, _ ->
                 WatchZones.clear(this, zone)
-                Bus.log("📐 [인식위치 삭제] $zone — 이 위치의 보스는 다시 등록할 때까지 인식하지 않습니다.")
-                Toast.makeText(this, "$zone 인식위치를 지웠습니다", Toast.LENGTH_SHORT).show()
+                Bus.log("📐 [인식위치 초기화] $zone — 저장한 값을 지우고 이 기기의 기본 위치로 돌아갑니다.")
+                Toast.makeText(this, "$zone 인식위치를 기본 위치로 되돌렸습니다", Toast.LENGTH_SHORT).show()
                 finish()
             }
         }

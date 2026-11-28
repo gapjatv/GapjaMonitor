@@ -570,8 +570,8 @@ class CaptureService : Service() {
                 checkSpeed(scr, lobbyRg)
             }
 
-            // ③ 보스 — 인식위치(태초보스 / 침공보스 / 시공보스) 안에서만 찾는다.
-            //    등록하지 않은 위치의 보스는 찾지 않는다. 전체 화면에서는 절대 보스를 찾지 않는다. (v3.6)
+            // ③ 보스 — 인식위치(전체보스 / 시공보스) 안에서만 찾는다. 지금 모드(태초/침공)의 보스 목록만 찾는다.
+            //    위치가 없으면(가로 화면 등) 그 보스는 찾지 않는다. 전체 화면에서는 절대 보스를 찾지 않는다. (v3.7)
             val zoneCache = HashMap<String, Mat?>()
             fun zoneMatFor(zone: String): Mat? {
                 if (!zoneCache.containsKey(zone)) {
@@ -702,15 +702,15 @@ class CaptureService : Service() {
 
     /** 시작할 때: 인식위치 등록 상태를 알리고, 지금 모드에 꼭 필요한 위치가 없으면 크게 알린다 */
     private fun logZones() {
-        Bus.log("📐 [인식위치] ${WatchZones.summary(this)}  (✘ 인 위치의 보스는 찾지 않습니다 · 로비·배속은 전체 화면에서 찾습니다)")
+        Bus.log("📐 [인식위치] ${WatchZones.summary(this)}  (기본 = 이 기기 기본 위치 사용 중 · 보스는 이 안에서만, 로비·배속은 전체 화면에서 찾습니다)")
         warnMissingZones(true)
     }
 
     private fun warnMissingZones(notify: Boolean) {
         val miss = WatchZones.missingFor(this, session.mode)
         if (miss.isEmpty()) return
-        Bus.log("⚠️ [인식위치 없음] ${session.mode.label} 모드에 필요한 ${miss.joinToString(", ")} 위치가 등록되지 않아 " +
-                "그 보스는 인식하지 않습니다. ([보스설정 → 인식위치] 에서 등록하세요)")
+        Bus.log("⚠️ [인식위치 없음] ${session.mode.label} 모드에 필요한 ${miss.joinToString(", ")} 위치가 이 화면 방향에는 없어서 " +
+                "그 보스는 인식하지 않습니다. (가로 화면은 [보스설정 → 인식위치] 에서 한 번 저장해야 합니다)")
         if (notify) Bus.notice("${miss.joinToString("·")} 인식위치가 없어 보스를 찾지 않습니다.")
     }
 

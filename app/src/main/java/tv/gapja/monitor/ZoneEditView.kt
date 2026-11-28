@@ -12,12 +12,12 @@ import android.view.View
 import kotlin.math.abs
 
 /**
- * 게임 화면 위에 인식 위치 네모(태초보스·침공보스·시공보스)를 그리고, 끌어서 옮기거나 모서리를 끌어 크기를 바꾸는 뷰.
+ * 게임 화면 위에 인식 위치 네모(전체보스·시공보스)를 그리고, 끌어서 옮기거나 모서리를 끌어 크기를 바꾸는 뷰.
  *
  *   • 위치마다 색이 다르고, 위쪽 선 가운데에 이름표가 선 위에 얹혀 있다 (선이 이름표 뒤로 지나간다)
  *   • 네모 안을 끌면 이동, 모서리 점을 끌면 크기 변경
  *   • 손가락을 따라 '부드럽게' 따라오도록, 화면에 그리는 값이 목표값으로 조금씩 다가간다
- *   • 아직 등록하지 않은 위치는 점선 + (미등록). 건드려서 옮기면 그때부터 등록된다
+ *   • 저장한 적 없는 위치는 점선 + (기본) — 기본 위치가 그대로 쓰이는 중이다. 건드려서 옮기면 그때부터 저장된다
  */
 class ZoneEditView(ctx: Context) : View(ctx) {
 
@@ -68,7 +68,7 @@ class ZoneEditView(ctx: Context) : View(ctx) {
         invalidate()
     }
 
-    /** 등록돼 있었거나 이번에 건드린 박스만 저장한다 (건드리지 않은 '미등록' 박스는 등록하지 않는다) */
+    /** 등록돼 있었거나 이번에 건드린 박스만 저장한다 (건드리지 않은 '기본' 박스는 저장하지 않고 기본 위치 그대로 둔다) */
     fun saveAll(ctx: Context) {
         val land = width > height
         for (b in boxes) {
@@ -133,7 +133,7 @@ class ZoneEditView(ctx: Context) : View(ctx) {
         dot.color = b.color
         for ((x, y) in corners(r)) { c.drawCircle(x, y, dp(8f), dot); c.drawCircle(x, y, dp(8f), ring) }
         // 이름표 — 위쪽 선 가운데. 선이 이름표 뒤로 지나가도록 어두운 바탕을 얹고 글자를 쓴다
-        val label = if (shown) b.zone else "${b.zone} (미등록)"
+        val label = if (shown) b.zone else "${b.zone} (기본)"
         val tw = text.measureText(label)
         val ph = dp(24f)
         val cy = r.top.coerceAtLeast(ph / 2f + dp(2f))
